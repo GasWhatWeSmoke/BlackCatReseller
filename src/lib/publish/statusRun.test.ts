@@ -1,0 +1,34 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { PrismaClient } from "@prisma/client";
+import { statusRun } from "./statusRun.ts";
+
+test("status follows an older recovered batch while preserving explicit history selection", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-status-run-"));
+  const database = path.join(root, "test.db");
+  fs.copyFileSync(path.resolve("config/template.db"), database);
+  const db = new PrismaClient({ datasources: { db: { url: `file:${database.replaceAll("\\", "/")}` } } });
+  t.after(async () => { await db.$disconnect(); assert.equal(path.dirname(root), path.resolve(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); });
+  assert.equal(await statusRun(db), null);
+  const older = await db.publishRun.create({ data: { status: "done", marketplacesJson: '["poshmark"]' } });
+  const newer = await db.publishRun.create({ data: { status: "done", marketplacesJson: '["ebay"]' } });
+  assert.equal((await statusRun(db))?.id, newer.id);
+  await db.publishRun.update({ where: { id: older.id }, data: { status: "paused" } });
+  assert.equal((await statusRun(db))?.id, older.id);
+  await db.publishRun.update({ where: { id: newer.id }, data: { status: "running" } });
+  assert.equal((await statusRun(db))?.id, newer.id);
+  const item = await db.item.create({ data: { sku: "STATUS-TEST", status: "Ready for Nifty" } });
+  const job = await db.publishJob.create({ data: { runId: older.id, itemId: item.id, marketplace: "poshmark", status: "publishing" } });
+  assert.equal((await statusRun(db))?.id, older.id, "an in-flight job stays visible even while its run is paused");
+  assert.equal((await statusRun(db, newer.id))?.id, newer.id);
+  assert.equal(await statusRun(db, newer.id + 999), null, "missing explicit history does not silently select another run");
+  await db.publishJob.update({ where: { id: job.id }, data: { status: "published" } });
+  await db.publishRun.update({ where: { id: older.id }, data: { status: "running" } });
+  await db.publishRun.update({ where: { id: newer.id }, data: { status: "done" } });
+  assert.equal((await statusRun(db))?.id, older.id, "queued recovery remains visible between jobs");
+  await db.publishRun.update({ where: { id: older.id }, data: { status: "done" } });
+  assert.equal((await statusRun(db))?.id, newer.id);
+});

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "blackcat-local-vision-benchmark-profile",
+  "id": "qwen3.5-4b-q6-k-l",
+  "sourceRepository": "bartowski/Qwen_Qwen3.5-4B-GGUF",
+  "revision": "4168f45a16a1290d65a4ec0fa312ae917a4c15d6",
+  "directory": "models/qwen3.5-4b-q6-k-l",
+  "weights": {
+    "name": "Qwen_Qwen3.5-4B-Q6_K_L.gguf",
+    "url": "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/4168f45a16a1290d65a4ec0fa312ae917a4c15d6/Qwen_Qwen3.5-4B-Q6_K_L.gguf?download=true",
+    "sha256": "0d7931a7f143ccfdf675c0d84d542c387cd9255af94ee9c8fb5fa6f6df7c08a0",
+    "size": 3959316448
+  },
+  "projector": {
+    "name": "mmproj-Qwen_Qwen3.5-4B-bf16.gguf",
+    "url": "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/4168f45a16a1290d65a4ec0fa312ae917a4c15d6/mmproj-Qwen_Qwen3.5-4B-bf16.gguf?download=true",
+    "sha256": "463f39bd1c291c1186c319a8c90ff8640aafa678b14cbee2232d695113dfbb66",
+    "size": 675569216
+  }
+}

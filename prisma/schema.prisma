@@ -1,0 +1,585 @@
+// Black Cat Agent — SQLite schema (Version A)
+// Prisma owns the schema/migrations. The Python worker writes to the SAME file
+// via sqlite3 with WAL mode (see scripts/init-db.mjs and worker/black_cat_worker/db.py).
+// SQLite has no native enums in Prisma, so enum-like fields are String + documented.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// One clothing item, keyed by its normalized SKU (e.g. "000001").
+model Item {
+  id                   Int       @id @default(autoincrement())
+  sku                  String    @unique
+  originalQrValue      String?
+  // Photographed | Needs Info | Ready for Nifty | Uploaded to Nifty | Listed | Sold | Problem | Archived
+  status               String    @default("Photographed")
+  brand                String    @default("Unknown")
+  size                 String?
+  itemType             String?
+  // Top-level item category: Clothing | Bag | Jewelry | Hat | Shoes | Accessory.
+  // AI-detected (editable). Drives size-gate exemption, weight/dims fallbacks, and
+  // the Nifty category drill for non-clothing items. Null = assume Clothing (legacy).
+  category             String?
+  color                String?
+  // Solid | Graphic | Multicolor | Tie-Dye | Striped | Camo (AI-detected pattern)
+  pattern              String?
+  // Estimated ship weight in ounces (from item type; editable). Used for Nifty.
+  weightOz             Int?
+  // Etsy "When was it made?" era — stores Nifty's EXACT option string
+  // (e.g. "2020 - 2026 (Recently)") so the assist exact-matches it.
+  whenMade             String?
+  // Marketplace item-specifics, promoted from aiRaw so they're editable + saved and
+  // reused when filling Nifty (each mirrors a Nifty dropdown). Null = fall back to aiRaw.
+  department           String?
+  material             String?
+  style                String?
+  secondaryColor       String?
+  // Cut/fit ("Slim","Relaxed","Oversized"...) — AI-detected, editable. A title keyword.
+  fit                  String?
+  // The model/product line a buyer actually searches for after the brand ("501",
+  // "Detroit Jacket"). Title keyword, ranked just under the pinned brand/type/size.
+  model                String?
+  // A style/product number printed on a tag ("501-0000"). Read by tag OCR, which is
+  // why it is trusted: it is machine-printed and self-identifying, not inferred.
+  styleNumber          String?
+  // "Silver Tab", "Reverse Weave" — a sub-line materially changes what an item is
+  // worth, and it is not the same field as the brand.
+  subBrand             String?
+  // Read off a care label by OCR ("Vietnam", "USA"). "Made in USA" is a real value
+  // signal on vintage denim, and this column is what lets a title claim it with
+  // evidence instead of guessing.
+  countryOfOrigin      String?
+  // The listing DESCRIPTION. Written by the vision model (premium resale copy) at intake
+  // and editable by the operator. Null = generate a deterministic description at export.
+  description          String?
+  // Rich AI-detected copy details, promoted from aiRaw so they're editable and feed the
+  // title/description builders. Array fields are stored as newline-separated text.
+  tertiaryColor        String?
+  closure              String?   // "Full Zip", "Snap-Button", "Pullover", ...
+  neckline             String?   // "Ribbed Collar", "Hooded", "Crewneck", ...
+  lining               String?   // "Quilted", "Fleece-Lined", ...
+  graphics             String?   // newline-separated visible graphics/patches/prints/text
+  keyDetails           String?   // newline-separated standout title keywords
+  aesthetic            String?   // newline-separated style/aesthetic tags
+  // Item condition for the listing (New with tags | Like new | Good | Fair | ...).
+  // User-set (not AI), and REQUIRED before Ready — no default, so a blank is detectable
+  // and the operator must confirm it rather than silently shipping "Good" (B11).
+  condition            String?
+  // The exact listing TITLE we sent to Nifty (Nifty shows titles, not our SKU, in the
+  // Inventory Manager) — the match key the Nifty->BCA sync uses to find this item.
+  niftyTitle           String?
+  // Etsy eligibility: none | handmade | vintage | craft | party. Etsy only allows
+  // handmade, 20+yr vintage, or craft/party supplies — modern resale clothing is
+  // skipped. Default "none" so we never list regular resale clothing to Etsy.
+  etsyEligible         String?   @default("none")
+  // True Vintage — the operator checks one box to assert the item is 20+ years old.
+  // When set, the export forces a vintage "When was it made?" era and marks the item
+  // Etsy-eligible, so Nifty's Etsy tab reads it as genuinely vintage WITHOUT the
+  // operator also having to pick the exact decade. Owns the "vintage" Etsy path;
+  // etsyEligible keeps the rarer handmade/craft/party cases.
+  trueVintage          Boolean   @default(false)
+  // Inseam in inches (e.g. "32") — eBay requires it for pants/jeans. Shown in the UI
+  // only for pants-type bottoms; if blank the assist falls back to a per-type default.
+  inseam               String?
+  // Flat garment measurements in inches (operator-measured). Shown per garment type in
+  // the editor and added to the listing description (B10). Stored as text ("22", "20.5").
+  chestIn              String?
+  lengthIn             String?
+  sleeveIn             String?
+  shoulderIn           String?
+  waistIn              String?
+  hipIn                String?
+  riseIn               String?
+  // JSON array of field names the AI auto-filled and the user hasn't confirmed yet
+  // (drives the "AI" badge in Review). Cleared once the item is reviewed.
+  aiFields             String?
+  // Raw JSON of the vision-model response, kept for debugging / re-review.
+  aiRaw                String?
+  // Vision model's self-reported recognition confidence (0..1); null = no AI ran/failed.
+  aiConfidence         Float?
+  // Per-attribute provenance: {"brand":{"value":...,"status":"verified|inferred|
+  // uncertain","sources":["ocr","vision"],"rawOcr":...}}. aiConfidence is one number
+  // for the whole item, which cannot say that the fabric was READ off a care label
+  // while the colour was inferred from a photo. Extracted from aiRaw at intake so the
+  // review UI can badge fields without parsing the whole blob.
+  evidenceJson         String?
+  // WHY AI identification produced nothing for this item ("endpoint unreachable",
+  // "model has no vision support", "unparseable output", ...). Set at intake or by
+  // Retry AI; cleared on a successful (re-)identification. Null + aiRaw null used to be
+  // indistinguishable from "vision disabled" — this column is the fix for the silent
+  // blank-batch failure. Drives the "AI failed" chip + Retry AI in Review.
+  aiError              String?
+  // How sure the grouper is that these photos are ONE item: high | medium | low.
+  // Null on items created before v1.2 or by hand.
+  groupingConfidence   String?
+  // JSON audit: why these photos were grouped (per-photo log, reasons, closedBy,
+  // orderSource). Drives the "why grouped" report in the UI.
+  groupingLogJson      String?
+  // True for a shell created from an unreadable/missing SKU sticker (FIX-xxxx SKUs);
+  // cleared when the operator renames the SKU.
+  isShell              Boolean   @default(false)
+  // Operator flag: "come back to this one" — set/cleared from Review or the item
+  // page; flagged items show a badge everywhere and filter in Inventory.
+  flagged              Boolean   @default(false)
+  photoCount           Int       @default(0)
+  processingFolderPath String?
+  readyFolderPath      String?
+  // Not Uploaded | Uploading | Draft | Published
+  niftyStatus          String    @default("Not Uploaded")
+  listedPrice          Float?
+  // ---- Upload audit (stale-price incident) ----
+  // Every successful draft/publish CREATES a new Nifty listing; these record how many
+  // times that happened and at what price, so a repriced item can be flagged ("the
+  // listing on Nifty still shows the OLD price") instead of silently duplicated.
+  // lastUploadPrice is "the price the LIVE listing carries" — an upload sets it, and so
+  // does a saved edit pushed from the Listings tab, because after that push the live
+  // listing really does show the new number and the tripwire must stop firing.
+  uploadCount          Int       @default(0)
+  lastUploadPrice      Float?
+  lastUploadAt         DateTime?
+  // ---- Live-listing edits (the Listings tab) ----
+  // niftyTitle + lastUploadPrice above are what the LIVE listing says. niftyDescription
+  // completes that snapshot, so a rewritten description is detectable as drift rather
+  // than diverging silently — the description is the one field nothing recorded.
+  niftyDescription     String?
+  // This listing's edit page on Nifty. LEARNED the first time a push actually reaches
+  // the edit form (the worker reports the URL it landed on) — never guessed from an id
+  // pattern we have not seen. Present = the next push can navigate straight there.
+  niftyEditUrl         String?
+  // Push audit, deliberately separate from uploadCount: an upload CREATES a listing,
+  // an edit updates the one that is already live. Conflating them would break the
+  // duplicate-listing guard's reading of uploadCount.
+  editCount            Int       @default(0)
+  lastEditAt           DateTime?
+  salePrice            Float?
+  platformSold         String?
+  // ---- Earnings / profit tracking (§30) ----
+  // What the operator PAID for the item (cost basis). Operator-entered + OPTIONAL; the sync
+  // NEVER estimates or overwrites it (cost-basis field class). Blank => the Earnings tab
+  // shows revenue-after-fees with a "cost missing" flag instead of a wrong profit number.
+  itemCost             Float?
+  // Marketplace fees on the sale. Synced actuals win; otherwise estimated from the
+  // per-platform fee model (feesEstimated=true).
+  marketplaceFees      Float?
+  feesEstimated        Boolean   @default(false)
+  // Shipping-label cost. Synced actuals win; otherwise estimated from the shipping model.
+  shippingCost         Float?
+  // Buyer-paid shipping that lands in YOUR payout (eBay/Etsy/ship-on-your-own) —
+  // synced from Nifty Analytics "Collected shipping". Null = never synced;
+  // 0 = the platform keeps the buyer's shipping (Poshmark) or it was label
+  // pass-through. Gross revenue = salePrice + shippingCharged; shipping profit =
+  // shippingCharged − shippingCost (2026-08-06 accurate-earnings update).
+  shippingCharged      Float?
+  shippingEstimated    Boolean   @default(false)
+  // Operator title OVERRIDE: when set, exports use this instead of the auto-generated
+  // title (blank = keep auto). Editable on the item page's Listing Title field.
+  customTitle          String?
+  // Live listing URL + the final title/price as actually listed (synced or operator-set).
+  listingUrl           String?
+  finalTitle           String?
+  finalPrice           Float?
+  // Derived: status == Sold AND salePrice present (the item can show realized profit).
+  earningsReady        Boolean   @default(false)
+  datePhotographed     DateTime?
+  dateListed           DateTime?
+  dateSold             DateTime?
+  // When this item was deliberately put back up for sale after having been listed
+  // before — returned, refunded, ended and re-posted. Nifty's Sold view is a permanent
+  // record that a TITLE sold once, not a statement about the listing currently carrying
+  // it, so without this marker that old row re-claims the new listing on every sync
+  // (000084 was re-marked Sold twice off a sale that had been refunded). Set = only a
+  // sale DATED AFTER this counts; cleared again the moment a real new sale lands.
+  relistedAt           DateTime?
+  // Fulfillment: when the operator marked the sold item's label bought/package shipped
+  // (drives the Past Uploads "Sold" packing queue + the nav to-ship badge). Null = still
+  // needs shipping. Operator-controlled during fulfillment; a synced full return clears
+  // it so the item's next sale enters the packing queue as a new shipment.
+  shippedAt            DateTime?
+  notes                String?
+  publicNotes          String?
+  // The Process run that created this item, so a batch can be cleared with its items.
+  batchId              Int?
+  batch                Batch?    @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  photos Photo[]
+
+  // Direct marketplace publishing (§45): these live OUTSIDE the Nifty columns above on
+  // purpose — status/niftyStatus belong to the Nifty pipeline and are never written by
+  // the direct publisher.
+  marketplaceListings MarketplaceListing[]
+  publishJobs         PublishJob[]
+
+  @@index([status])
+  @@index([brand])
+  @@index([batchId])
+}
+
+/// One photo file. May or may not be attached to an item (markers + leftovers).
+model Photo {
+  id                   Int      @id @default(autoincrement())
+  itemId               Int?
+  item                 Item?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  originalFilename     String
+  storedPath           String
+  thumbPath            String?
+  sha256               String
+  sortOrder            Int      @default(0)
+  isCover              Boolean  @default(false)
+  isMarker             Boolean  @default(false)
+  includeInListing     Boolean  @default(true)
+  rotation             Int      @default(0) // 0 | 90 | 180 | 270, applied non-destructively at export
+  decodedValue         String?
+  width                Int?
+  height               Int?
+  exifDateTimeOriginal String?  // stored as raw EXIF string to avoid TZ ambiguity
+  exifSubSec           String?
+  createdAt            DateTime @default(now())
+
+  @@index([itemId])
+  @@index([sha256])
+}
+
+/// Exact-file dedup ledger (SHA-256 of file bytes).
+model FileHash {
+  id               Int      @id @default(autoincrement())
+  sha256           String   @unique
+  originalFilename String
+  processedPath    String?
+  sku              String?
+  processedAt      DateTime @default(now())
+}
+
+/// Single-row JSON settings document (id is always 1).
+model AppSettings {
+  id        Int      @id @default(1)
+  data      String   // JSON blob (see src/lib/types.ts AppSettingsData)
+  updatedAt DateTime @updatedAt
+}
+
+/// Controlled vocabulary for Size / Item Type / Color / Brand (extensible).
+model Vocabulary {
+  id        Int    @id @default(autoincrement())
+  type      String // size | itemType | color | brand
+  value     String
+  sortOrder Int    @default(0)
+
+  @@unique([type, value])
+  @@index([type])
+}
+
+/// One worker "Process" run.
+model Batch {
+  id                Int          @id @default(autoincrement())
+  name              String?      // user-editable batch label
+  startedAt         DateTime     @default(now())
+  finishedAt        DateTime?
+  itemsCreated      Int          @default(0)
+  photosProcessed   Int          @default(0)
+  duplicatesSkipped Int          @default(0)
+  problems          Int          @default(0)
+  collisions        Int          @default(0)
+  durationMs        Int?
+  summaryJson       String?
+  problemLogs       ProblemLog[]
+  items             Item[]
+}
+
+/// A flagged issue from a batch (typed; resolvable from the UI).
+model ProblemLog {
+  id        Int      @id @default(autoincrement())
+  batchId   Int?
+  batch     Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  // NO_SKU | DUPLICATE_SKU_COLLISION | SIZE_MISSING | UNCLEAR_GROUP | MARKER_NO_PHOTOS |
+  // UNTERMINATED_GROUP | AMBIGUOUS_MARKER | UNSUPPORTED_FORMAT | UNREADABLE_FILE |
+  // QR_UNDECODABLE | AI_ENRICH_FAILED (batch-level: N items imported without AI data)
+  type      String
+  sku       String?
+  photoPath String?
+  message   String?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([batchId])
+  @@index([resolved])
+}
+
+/// A SKU collision awaiting user resolution (Append / Replace / New).
+model Collision {
+  id                 Int      @id @default(autoincrement())
+  batchId            Int?
+  sku                String
+  existingItemId     Int?
+  incomingPhotosJson String // JSON list of staged photo paths + decoded info
+  status             String   @default("pending") // pending | resolved
+  resolution         String?  // append | replace | new
+  createdAt          DateTime @default(now())
+
+  @@index([status])
+}
+
+/// One field-level change from a sales/earnings sync run (§30.6). A persistent audit so the
+/// Earnings views read from durable data and every money change is traceable across restarts.
+model SyncLog {
+  id       Int      @id @default(autoincrement())
+  runAt    DateTime @default(now())
+  itemId   Int?
+  sku      String
+  field    String
+  oldValue String?
+  newValue String?
+  // updated | skipped | conflict | earnings-ready
+  action   String
+  // nifty | estimate | manual
+  source   String
+  note     String?
+
+  @@index([runAt])
+  @@index([itemId])
+}
+
+// ---------------------------------------------------------------------------
+// Market Intelligence (2026-08-19).
+//
+// A local, accumulating record of what clothing actually sells for. Deliberately
+// separate from the listing workflow: nothing below is written by intake, review,
+// export or upload, and NOTHING here writes to Item. A market provider failing,
+// or a whole market table being empty, cannot touch inventory.
+//
+// The hard rule for everything in here: sold data and active-listing data are
+// never mixed. An asking price is what somebody hopes for; a sold price is what
+// somebody paid. Only the second is evidence of value.
+// ---------------------------------------------------------------------------
+
+/// A tracked market identity — "Carhartt Detroit Jacket", "Levi's 501 Made in USA".
+/// One row per thing worth watching, whether or not it is currently in inventory.
+model MarketItem {
+  id            Int      @id @default(autoincrement())
+  /// Normalized identity key (brand|model|itemType...), so the same thing researched
+  /// twice does not become two rows.
+  key           String   @unique
+  label         String
+  brand         String?
+  model         String?
+  styleNumber   String?
+  category      String?
+  itemType      String?
+  /// Defining attributes as JSON (era, material, colour, size...) used by the
+  /// comparable engine for similarity scoring.
+  attrsJson     String?
+  /// What the operator actually typed, kept so a search can be replayed verbatim.
+  queryText     String?
+  /// Tracked items are refreshed by the heartbeat; untracked ones were one-off lookups.
+  isTracked     Boolean  @default(true)
+  lastRefreshedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  observations  MarketObservation[]
+  snapshots     MarketSnapshot[]
+
+  @@index([isTracked])
+  @@index([brand])
+}
+
+/// One comparable listing. `kind` is the load-bearing column: sold vs active are
+/// different claims and are never averaged together.
+model MarketObservation {
+  id           Int      @id @default(autoincrement())
+  marketItemId Int
+  marketItem   MarketItem @relation(fields: [marketItemId], references: [id], onDelete: Cascade)
+  /// Where it came from: "blackcat-sales", "manual:ebay", "manual:mercari", ...
+  /// Always recorded, so a hand-captured comp is distinguishable from an automated one.
+  provider     String
+  /// sold | active — never mixed in any calculation.
+  kind         String
+  price        Float
+  shipping     Float?
+  currency     String   @default("USD")
+  condition    String?
+  size         String?
+  title        String?
+  url          String?
+  listedAt     DateTime?
+  soldAt       DateTime?
+  /// When Black Cat learned this, which is not when it happened.
+  observedAt   DateTime @default(now())
+  /// Stable hash of provider + listing identity, so re-capturing the same comp
+  /// updates nothing and duplicates never inflate a sample size.
+  dedupKey     String   @unique
+  /// Similarity to its MarketItem at capture time (0..1), for explainability.
+  similarity   Float?
+  sourceNote   String?
+  rawJson      String?
+
+  @@index([marketItemId, kind])
+  @@index([observedAt])
+  @@index([soldAt])
+}
+
+/// A precomputed daily aggregate. Charts read these rather than re-reducing every
+/// observation, and they are the ONLY source of a price-history line — a day with
+/// no observations simply has no point, never an interpolated one.
+model MarketSnapshot {
+  id           Int      @id @default(autoincrement())
+  marketItemId Int
+  marketItem   MarketItem @relation(fields: [marketItemId], references: [id], onDelete: Cascade)
+  /// Midnight of the day being summarized.
+  date         DateTime
+  medianSold   Float?
+  avgSold      Float?
+  p25Sold      Float?
+  p75Sold      Float?
+  soldCount    Int      @default(0)
+  activeCount  Int      @default(0)
+  activeMedian Float?
+  /// sold / (sold + active) over the window; null when the sample is too small.
+  sellThrough  Float?
+  trendScore   Float?
+  sampleSize   Int      @default(0)
+  /// Which formula version produced this, so methodology can improve without
+  /// silently rewriting history.
+  method       String?
+
+  @@unique([marketItemId, date])
+  @@index([date])
+}
+
+/// What Black Cat thinks one inventory item is worth. Keyed by itemId but stored
+/// OUTSIDE Item on purpose: valuation is derived, disposable and recomputable, and
+/// must never be confused with the operator's own pricing.
+model ItemValuation {
+  id           Int      @id @default(autoincrement())
+  itemId       Int      @unique
+  marketItemId Int?
+  /// Similarity-weighted median of SOLD comps. Null when there is not enough evidence.
+  fmv          Float?
+  recommended  Float?
+  quickSale    Float?
+  premium      Float?
+  /// high | medium | low | insufficient
+  confidence   String   @default("insufficient")
+  compCount    Int      @default(0)
+  /// market-data | own-sales | heuristic-estimate — never blended silently, so a
+  /// number backed by real sales is always distinguishable from a table lookup.
+  method       String   @default("heuristic-estimate")
+  /// The comps and weights behind the number, so "why is it worth this" is answerable.
+  detailsJson  String?
+  computedAt   DateTime @default(now())
+
+  @@index([confidence])
+}
+
+/// Every market refresh attempt. Market failures are recorded HERE and nowhere
+/// else — never in ProblemLog, never on an Item — so a dead provider can never
+/// make an inventory item look broken.
+model MarketRefreshLog {
+  id                Int      @id @default(autoincrement())
+  provider          String
+  query             String?
+  /// ok | error | rate-limited | unavailable | skipped
+  status            String
+  error             String?
+  startedAt         DateTime @default(now())
+  finishedAt        DateTime?
+  rateLimited       Boolean  @default(false)
+  observationsAdded Int      @default(0)
+
+  @@index([startedAt])
+  @@index([provider])
+}
+
+// ---------------------------------------------------------------------------
+// Direct marketplace publishing (§45, 2026-08-24).
+//
+// Black Cat as its own publishing hub: reviewed items go straight to eBay /
+// Depop through per-marketplace adapters, without Nifty in the middle. This is
+// ADDITIVE — nothing here is written by intake, review, export, the Nifty
+// assist or the Nifty sync, and nothing here writes status/niftyStatus.
+// ---------------------------------------------------------------------------
+
+/// One marketplace's record of one item's DIRECT listing (§45.18). The unique
+/// (itemId, marketplace) pair is the duplicate-prevention backbone: a second
+/// listing on the same marketplace requires an explicit relist, never a retry.
+model MarketplaceListing {
+  id                Int       @id @default(autoincrement())
+  itemId            Int
+  item              Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  /// "ebay" | "depop" | "poshmark" | "etsy"
+  marketplace       String
+  /// published | sold | ended | unknown | not_published.
+  /// delist_pending | delisting | delist_unknown | delist_failed are removal states.
+  status            String    @default("published")
+  externalListingId String?
+  externalUrl       String?
+  publishedAt       DateTime?
+  endedAt           DateTime?
+  lastAttemptAt     DateTime?
+  /// Attempts in the current publication/removal phase; PublishJob retains post history.
+  attemptCount      Int       @default(0)
+  lastError         String?
+  /// Price and title AS PUBLISHED — the drift baseline for future cross-sync.
+  price             Float?
+  title             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([itemId, marketplace])
+  @@index([marketplace, status])
+}
+
+/// One Auto Run: a batch of publish jobs started together (§45.7).
+model PublishRun {
+  id               Int       @id @default(autoincrement())
+  /// running | paused | cancelled | done
+  status           String    @default("running")
+  /// JSON array of marketplace ids this run targets.
+  marketplacesJson String
+  totalJobs        Int       @default(0)
+  note             String?
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+
+  jobs PublishJob[]
+
+  @@index([status])
+}
+
+/// One item x one marketplace inside one run (§45.8). Durable: the queue is
+/// THIS table — an app/worker/computer restart recovers by re-reading it
+/// (in-flight "publishing" rows are re-queued on engine start).
+model PublishJob {
+  id                Int         @id @default(autoincrement())
+  runId             Int
+  run               PublishRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  itemId            Int
+  item              Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  marketplace       String
+  /// queued | publishing | published | failed | requires_review | retrying | cancelled
+  status            String      @default("queued")
+  attemptCount      Int         @default(0)
+  /// Earliest next attempt (exponential backoff for retryable errors).
+  nextAttemptAt     DateTime?
+  lastError         String?
+  /// retryable | requires_review | fatal — how the last error was classified.
+  errorClass        String?
+  /// JSON array of pre-publish validation issues (set when requires_review).
+  validationJson    String?
+  externalListingId String?
+  externalUrl       String?
+  createdAt         DateTime    @default(now())
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([runId, itemId, marketplace])
+  @@index([status])
+  @@index([runId, status])
+}

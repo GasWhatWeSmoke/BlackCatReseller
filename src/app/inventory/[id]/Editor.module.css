@@ -1,0 +1,31 @@
+.workspace { min-width:0; overflow-wrap:anywhere; }
+.navigation,.heading,.sectionHeading,.actions,.status { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.navigation { justify-content:space-between; margin-bottom:16px; }
+.heading { justify-content:space-between; align-items:flex-start; margin-bottom:8px; }
+.identity { min-width:0; flex:1 1 280px; }
+.identity h1 { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:0; font:750 24px var(--font-code); }
+.status { max-width:100%; }
+.sectionHeading { justify-content:space-between; margin-bottom:14px; }
+.details { padding:20px; margin:16px 0 22px; }
+.fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; border:0; margin:0; padding:0; min-width:0; }
+.field { display:block; min-width:0; }
+.group { min-width:0; margin:0; padding:0; border:0; }
+.group legend { color:var(--muted); font-size:12px; margin-bottom:6px; }
+.field input,.field select,.field textarea { max-width:100%; }
+.pair { grid-column:1/-1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.tableScroll { max-width:100%; overflow:auto; margin-top:10px; }
+.tableScroll:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.tableScroll table { min-width:580px; width:100%; border-collapse:collapse; font-size:12px; }
+.tableScroll th,.tableScroll td { padding:6px 8px; text-align:left; }
+.photoIntro { flex:1 1 230px; min-width:0; color:var(--muted); font-size:13px; margin:0; }
+.photos { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr)); gap:16px; }
+.photoActions { position:relative; z-index:1; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; padding:8px; background:var(--panel); }
+.photoButton { display:inline-flex; justify-content:center; align-items:center; width:40px; height:40px; padding:6px; border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--panel-2); color:var(--text); cursor:pointer; }
+.photoButton:disabled { opacity:.45; cursor:not-allowed; }
+.photoSelect { position:absolute; top:6px; right:6px; z-index:3; display:grid; place-items:center; width:44px; height:44px; border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--panel); cursor:pointer; }
+.photoSelect input { width:20px; height:20px; }
+.excluded { position:absolute; left:6px; bottom:6px; padding:3px 6px; background:var(--panel); color:var(--warn); border-radius:var(--radius-sm); font-size:11px; }
+.marker { width:min(150px,100%); overflow:hidden; position:relative; }
+@media(max-width:1100px) { .fields { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:680px) { .fields,.pair { grid-template-columns:minmax(0,1fr); } .details { padding:16px; } .actions { width:100%; } .identity h1 { font-size:22px; } }
+@media(pointer:coarse) { .photoButton { width:44px; height:44px; } }

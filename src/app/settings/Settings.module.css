@@ -1,0 +1,22 @@
+.workspace { width:100%; min-width:0; max-width:1000px; overflow-wrap:anywhere; }
+.workspace :is(div,section,details,fieldset,label) { min-width:0; }
+.workspace :is(input,select,textarea,button) { max-width:100%; }
+.workspace button { white-space:normal; }
+.header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; margin-bottom:18px; }
+.section { padding:20px; }
+.section>summary { cursor:pointer; font-size:15px; font-weight:700; }
+.sectionBody { display:flex; flex-direction:column; gap:14px; border:0; margin:0; padding:18px 0 0; }
+.row { display:grid; grid-template-columns:minmax(140px,200px) minmax(0,1fr); gap:12px; align-items:center; }
+.label { color:var(--muted); font-size:13px; }
+.controls { min-width:0; }
+.path { display:flex; align-items:center; gap:8px; }
+.path input { flex:1; min-width:0; }
+.path button { flex-shrink:0; }
+.inlineFields { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.toggle { width:48px; height:44px; padding:0; border:0; background:none; display:grid; place-items:center; cursor:pointer; }
+.toggleTrack { width:42px; height:24px; border:1px solid var(--control-border); border-radius:24px; background:var(--panel-2); position:relative; }
+.toggleTrack>span { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:var(--text); transition:left .12s; }
+.toggle[aria-checked=true] .toggleTrack { background:var(--accent); }
+.toggle[aria-checked=true] .toggleTrack>span { left:20px; background:var(--accent-ink); }
+@media(max-width:800px) { .row { grid-template-columns:minmax(0,1fr); gap:6px; } }
+@media(max-width:560px) { .section { padding:16px; } }

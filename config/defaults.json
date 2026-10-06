@@ -1,0 +1,96 @@
+{
+  "_doc": "SINGLE SOURCE OF TRUTH for non-path settings defaults (spec Â§28). Consumed by src/lib/settings.ts (UI/server), scripts/init-db.mjs (DB seed), and worker/black_cat_worker/config.py (Python worker) â€” all read the `defaults` object below. Environment-derived PATHS (dataRoot, *Path, pythonWorkerPath) are computed per-runtime and are NOT stored here. Edit defaults HERE so the three consumers can't drift.",
+  "_doc_mercariShipFrom": "PER-MACHINE, and deliberately BLANK. This used to ship the author's own city and ZIP, which meant every fresh install carried a stranger's address AND tried to select a Mercari address that does not exist on the tester's account. The operator sets it in Settings -> Shipping; it must match an address already saved on their Mercari account, because the assist selects a saved one and never types a new one.",
+  "defaults": {
+    "skuPrefixes": [
+      "BC-"
+    ],
+    "skuLength": 6,
+    "skuRegex": "^(SKU:\\s*)?(BC-)?(\\d{6})$",
+    "requiredFieldsForReady": [
+      "size",
+      "itemType",
+      "color"
+    ],
+    "minListingPhotos": 3,
+    "fileStabilitySeconds": 2,
+    "ocrEnabled": true,
+    "ocrPreprocess": true,
+    "ocrPostCorrect": true,
+    "ocrSmartGate": true,
+    "tagOcrEnabled": true,
+    "tagOcrMaxPhotos": 4,
+    "tagOcrMinConfidence": 0.6,
+    "backupRetention": 20,
+    "statusColors": {
+      "Photographed": "#64748b",
+      "Needs Info": "#f59e0b",
+      "Listed": "#8b5cf6",
+      "Sold": "#22c55e",
+      "Problem": "#ef4444",
+      "Archived": "#475569",
+      "Ready": "#10b981"
+    },
+    "visionEnabled": false,
+    "visionMaxPhotos": 4,
+    "visionFields": [
+      "size",
+      "color",
+      "pattern",
+      "itemType",
+      "brand"
+    ],
+    "visionTimeoutSeconds": 120,
+    "visionMaxTokens": 1800,
+    "publishAbortAfterConsecutiveFailures": 5,
+    "priceNinetyNine": "down",
+    "priceWarnMin": 5,
+    "priceWarnMax": 500,
+    "lensPublicUpload": true,
+    "feeModel": {
+      "eBay": {
+        "feePercent": 13.25,
+        "fixedFee": 0.3
+      },
+      "Mercari": {
+        "feePercent": 10,
+        "fixedFee": 0
+      },
+      "Depop": {
+        "feePercent": 10,
+        "fixedFee": 0.45
+      },
+      "Poshmark": {
+        "feePercent": 20,
+        "fixedFee": 0
+      },
+      "default": {
+        "feePercent": 12,
+        "fixedFee": 0.3
+      }
+    },
+    "shippingModel": {
+      "tiers": [
+        {
+          "maxOz": 16,
+          "cost": 4.5
+        },
+        {
+          "maxOz": 32,
+          "cost": 7
+        },
+        {
+          "maxOz": 80,
+          "cost": 12
+        }
+      ],
+      "default": 15
+    },
+    "mercariShipFrom": {
+      "city": "",
+      "zip": "",
+      "state": "",
+      "stateFull": ""
+    }
+  }
+}

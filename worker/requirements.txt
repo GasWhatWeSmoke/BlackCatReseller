@@ -1,0 +1,21 @@
+# Black Cat Agent worker dependencies.
+#
+# OCR engine: PaddleOCR PP-OCRv5 (a fallback; QR is the primary decode path).
+# OCR is deliberately CPU-only. decode.py pins every compatible PaddleOCR
+# constructor to device="cpu" so scan/decode does not consume local-model GPU VRAM
+# admission without contending for its GPU lane. Moving OCR to GPU requires a
+# separately reviewed admission/order change, not a dependency swap. It also
+# passes enable_mkldnn=False to avoid a OneDNN PIR crash in Paddle 3.x PP-OCRv5.
+
+Pillow>=10.0
+numpy>=2.0
+opencv-python>=4.9
+pyzbar>=0.1.9
+paddlepaddle>=3.0
+paddleocr==3.7.0
+# Native Chrome connections use the locally verified Playwright 1.62 interface.
+playwright>=1.62,<2
+# qrcode is only needed to generate the synthetic E2E sticker fixtures
+# (scripts/e2e/gen_fixtures.py). Without it that generator raises
+# ModuleNotFoundError and the mixed-batch sandbox cannot be built.
+qrcode>=7.4

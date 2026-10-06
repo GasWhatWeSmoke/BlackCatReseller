@@ -1,0 +1,13 @@
+.backdrop { position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none; }
+.contained { position:absolute; border-radius:inherit; }
+.layer { position:absolute; inset:-25%; pointer-events:none; animation-play-state:var(--ambient-play,paused); }
+.first { background:radial-gradient(ellipse at 24% 38%,var(--ambient-start) 0%,var(--ambient-start) 12%,transparent 64%); animation:ambientDriftFirst 48s ease-in-out infinite alternate; animation-play-state:var(--ambient-play,paused); }
+.second { background:radial-gradient(ellipse at 76% 62%,var(--ambient-end) 0%,var(--ambient-end) 10%,transparent 62%); animation:ambientDriftSecond 64s ease-in-out infinite alternate; animation-play-state:var(--ambient-play,paused); }
+@keyframes ambientDriftFirst {
+  from { transform:translate3d(-9%,-7%,0) rotate(-8deg) scale(1); opacity:.7; }
+  to { transform:translate3d(12%,10%,0) rotate(10deg) scale(1.12); opacity:.95; }
+}
+@keyframes ambientDriftSecond {
+  from { transform:translate3d(9%,8%,0) rotate(7deg) scale(1.08); opacity:.9; }
+  to { transform:translate3d(-13%,-10%,0) rotate(-12deg) scale(1); opacity:.65; }
+}

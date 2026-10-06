@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "assetRoot": ".local/vision",
+  "runtime": {
+    "id": "llama-b10218-win-cuda-13.3-x64",
+    "releaseTag": "b10218",
+    "cudaVersion": "13.3",
+    "directory": "runtime/llama-b10218-win-cuda-13.3-x64",
+    "executable": "llama-server.exe",
+    "archives": [
+      {
+        "name": "llama-b10218-bin-win-cuda-13.3-x64.zip",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10218/llama-b10218-bin-win-cuda-13.3-x64.zip",
+        "sha256": "c275a6a5923e1d665d0b1d2b32ae266241a83936e9a5c2f0453b99d21877c88f",
+        "size": 146509386
+      },
+      {
+        "name": "cudart-llama-bin-win-cuda-13.3-x64.zip",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10218/cudart-llama-bin-win-cuda-13.3-x64.zip",
+        "sha256": "1462a050eb4c684921ba51dcc4cc488a036674c3e73e9945ee705b854808d03e",
+        "size": 390970417
+      }
+    ]
+  },
+  "model": {
+    "id": "qwen3.5-4b-q4-k-m",
+    "revision": "f9f88ac3e234be915e23811a6d28ea287bdb927e",
+    "directory": "models/qwen3.5-4b-q4-k-m",
+    "weights": {
+      "name": "Qwen3.5-4B-Q4_K_M.gguf",
+      "url": "https://huggingface.co/lmstudio-community/Qwen3.5-4B-GGUF/resolve/f9f88ac3e234be915e23811a6d28ea287bdb927e/Qwen3.5-4B-Q4_K_M.gguf?download=true",
+      "sha256": "25082a7dd3776cc3c741c6347d3bd04523f05796607b3fbc32fa3a25dfa1418c",
+      "size": 2707513696
+    },
+    "projector": {
+      "name": "mmproj-Qwen3.5-4B-BF16.gguf",
+      "url": "https://huggingface.co/lmstudio-community/Qwen3.5-4B-GGUF/resolve/f9f88ac3e234be915e23811a6d28ea287bdb927e/mmproj-Qwen3.5-4B-BF16.gguf?download=true",
+      "sha256": "ae08d9d7eceb8f2d0672d61b5e6aa78b611f2942b55ed71d21414980cc454b91",
+      "size": 675568768
+    }
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 1235,
+    "alias": "blackcat-vision",
+    "apiKeyFile": "api-key.txt",
+    "startupTimeoutMs": 180000,
+    "shutdownTimeoutMs": 10000,
+    "healthPollMs": 500,
+    "maxRestarts": 1,
+    "arguments": [
+      "-ngl",
+      "all",
+      "-c",
+      "8192",
+      "-fa",
+      "on",
+      "-ctk",
+      "q8_0",
+      "-ctv",
+      "q8_0",
+      "--parallel",
+      "1",
+      "-b",
+      "512",
+      "-ub",
+      "256",
+      "-t",
+      "12",
+      "--reasoning",
+      "off",
+      "--image-min-tokens",
+      "1024",
+      "--image-max-tokens",
+      "1024",
+      "--cache-ram",
+      "0",
+      "--cors-origins",
+      "http://127.0.0.1",
+      "--no-cors-credentials",
+      "--offline",
+      "--no-webui",
+      "-lv",
+      "4"
+    ]
+  },
+  "receipts": {
+    "setup": "setup-receipt.json",
+    "state": "server-state.json",
+    "log": "logs/llama-server.log"
+  }
+}

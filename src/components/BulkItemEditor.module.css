@@ -1,0 +1,17 @@
+.dialog { width:min(760px,92vw); max-width:calc(100vw - 24px); max-height:85vh; overflow:auto; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); padding:22px; margin:auto; }
+.dialog::backdrop { background:#0009; }
+.dialog button:focus { outline:2px solid var(--accent); outline-offset:3px; }
+.dialog h2,.report h2 { margin:0 0 12px; font-size:20px; }
+.fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:20px 0; }
+.field { display:grid; gap:6px; min-width:0; }
+.field label { display:flex; align-items:center; gap:7px; }
+.field input[type=checkbox] { accent-color:var(--accent); width:18px; height:18px; }
+.actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+.summary { display:grid; gap:10px; }
+.summary dt { color:var(--muted); font-size:12px; }
+.summary dd { margin:3px 0 0; font-weight:600; overflow-wrap:anywhere; white-space:pre-wrap; }
+.items { max-height:220px; overflow:auto; padding-left:24px; }
+.items li,.report li { margin:6px 0; overflow-wrap:anywhere; }
+.report { margin:18px 0; border:1px solid var(--border); background:var(--panel); padding:20px; border-radius:var(--radius); }
+.report ul { max-height:280px; overflow:auto; padding-left:24px; }
+@media(max-width:540px) { .fields { grid-template-columns:minmax(0,1fr); } .dialog { padding:16px; } }

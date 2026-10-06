@@ -1,0 +1,26 @@
+.research { min-width:0; padding:20px; border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--panel); }
+.research header { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--blue); }
+.research h3 { margin:0; font-size:16px; color:var(--text); }
+.research header>span { margin-left:auto; font-size:10px; letter-spacing:.6px; text-transform:uppercase; }
+.research p { font-size:12px; line-height:1.6; }
+.search { display:block; margin:16px 0 10px; font-size:12px; color:var(--muted); }
+.search input { margin-top:6px; }
+.links { display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:11px; }
+.links button,.links .btn { font-size:12px; padding:8px 10px; }
+.research details { margin-top:15px; border-top:1px solid var(--border); padding-top:12px; }
+.research summary { cursor:pointer; font-size:12px; font-weight:650; }
+.research summary svg { display:inline; vertical-align:middle; margin-right:5px; }
+.research fieldset { min-width:0; border:0; padding:15px 0 0; margin:0; display:grid; gap:12px; }
+.research label { font-size:12px; color:var(--muted); }
+.research label input,.research label select { margin-top:5px; }
+.pair { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.error { color:var(--danger); }
+.comparables { display:grid; gap:10px; margin-top:14px; }
+.comparables h4 { font-size:12px; margin:0; color:var(--muted); }
+.comparables>article,.comparables>div { padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--input); display:grid; gap:7px; font-size:12px; }
+.comparables article>div { display:flex; align-items:center; gap:10px; justify-content:space-between; }
+.comparables span,.comparables small { color:var(--muted); font-size:10px; }
+.comparables .kind { width:fit-content; border-radius:5px; padding:3px 6px; background:var(--panel-2); color:var(--blue); }
+.comparables .kind[data-kind=sold] { color:var(--mint); }
+.comparables button { font-size:11px; padding:5px 8px; }
+@media(max-width:560px) { .research { padding:16px; } .pair { grid-template-columns:1fr; } }

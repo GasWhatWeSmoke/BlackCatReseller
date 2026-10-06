@@ -1,0 +1,43 @@
+.shell { --sidebar-width:224px; --workspace-gutter:32px; position:relative; isolation:isolate; display:flex; min-height:100vh; background:var(--workspace-background); }
+.content { flex:1; min-width:0; width:100%; max-width:1600px; margin:0 auto; padding:32px var(--workspace-gutter) 48px; }
+.sidebar { width:var(--sidebar-width); flex-shrink:0; height:100vh; height:100dvh; position:sticky; top:0; padding:24px 14px 18px; display:flex; flex-direction:column; border-right:1px solid var(--border); background:var(--sidebar-background); box-shadow:inset -1px 0 0 #0008,8px 0 28px #0002; overflow-y:auto; }
+.brand { display:flex; align-items:center; gap:10px; padding:0 3px 30px; }
+.brandMark { width:38px; height:42px; flex-shrink:0; display:grid; place-items:center; color:var(--accent); filter:drop-shadow(0 0 10px #c8ef8328); }
+.brandName { font-size:16px; font-weight:800; letter-spacing:1.3px; line-height:1.2; white-space:nowrap; }
+.brandName small { display:block; font-size:9px; font-weight:600; letter-spacing:1.1px; color:var(--muted); margin-top:7px; }
+.navLabel { font-size:10px; font-weight:700; letter-spacing:1.5px; color:var(--muted); padding:0 12px 12px; }
+.nav { display:flex; flex-direction:column; gap:7px; }
+.navLink { position:relative; display:flex; align-items:center; gap:11px; min-height:46px; padding:11px 12px; color:var(--muted); border:1px solid transparent; border-radius:var(--radius-sm); font-size:13px; font-weight:650; transition:background .12s,color .12s,border-color .12s; }
+.navLink:hover { background:var(--panel); color:var(--text); }
+.navLink[aria-current] { background:var(--panel-2); border-color:var(--control-border); box-shadow:inset 2px 0 var(--accent),inset 0 1px 0 #ffffff0c,0 4px 14px #0003; color:var(--text); }
+.navLink[aria-current] svg { color:var(--accent); }
+.count { background:var(--mint); color:var(--mint-ink); padding:2px 6px; border-radius:4px; font-size:11px; margin-left:auto; font-variant-numeric:tabular-nums; }
+.countStale { background:var(--warn); color:var(--warn-ink); }
+.shippingRefresh { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:8px; border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--panel); color:var(--warn); font-size:11px; cursor:pointer; }
+.shippingRefresh:disabled { opacity:.65; cursor:wait; }
+.subnav { display:grid; gap:3px; border-left:1px solid var(--border); margin:12px 0 0 22px; padding-left:16px; }
+.subnav a { display:flex; gap:8px; align-items:center; min-height:40px; padding:7px 0; font-size:12px; color:var(--muted); }
+.subnav a:hover,.subnav a[aria-current] { color:var(--accent); }
+.addPhotos { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:26px 0 24px; padding:12px; border:1px solid var(--control-border); background:var(--panel); border-radius:var(--radius-sm); color:var(--accent); font-size:12px; font-weight:650; transition:border-color .15s,background .15s; }
+.addPhotos:hover { border-color:var(--accent); background:var(--accent-dim); }
+.sidebarFooter { margin-top:auto; display:grid; gap:17px; padding:18px 12px 0; border-top:1px solid var(--border); }
+.localBadge { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--muted); }
+.localBadge>span { width:5px; height:5px; border-radius:50%; background:var(--mint); }
+.sound { border:0; background:none; padding:4px 0; min-height:40px; display:flex; gap:8px; align-items:center; color:var(--muted); cursor:pointer; font-size:12px; }
+.version { color:var(--muted); font-size:10px; }
+@media(max-width:1100px) { .shell { --sidebar-width:192px; --workspace-gutter:24px; } .sidebar { padding-inline:10px; } .brand { gap:6px; } .brandMark { width:30px; } .brandName { font-size:14px; letter-spacing:1px; } .brandName small { font-size:8px; letter-spacing:.7px; } }
+@media(max-width:740px) {
+  .shell { --sidebar-width:64px; --workspace-gutter:16px; }
+  .sidebar { padding:18px 8px 12px; }
+  .brand { padding:0 0 24px; justify-content:center; }
+  .brandName,.navLabel,.navText,.addPhotos,.localBadge,.version,.sound span,.subnavText,.subnav .inventoryHome { display:none; }
+  .navLink { justify-content:center; min-height:46px; padding:10px 0; }
+  .count { position:absolute; top:1px; right:0; margin:0; padding:0 4px; font-size:10px; }
+  .subnav { margin:12px 0 0; padding:8px 0 0; border-left:0; border-top:1px solid var(--border); }
+  .subnav a { justify-content:center; min-height:46px; padding:10px 0; border-radius:var(--radius-sm); }
+  .subnav a[aria-current] { background:var(--accent-dim); }
+  .content { padding-block:24px 32px; }
+  .sidebarFooter { padding:10px 0 0; gap:0; }
+  .sound { justify-content:center; min-height:44px; width:100%; }
+}
+@media(max-width:380px) { .shell { --workspace-gutter:12px; } }

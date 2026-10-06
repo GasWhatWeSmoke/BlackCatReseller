@@ -1,0 +1,69 @@
+[
+  {
+    "category": "Clothing", "itemType": "Shirt", "primaryColor": "Blue",
+    "secondaryColor": "White", "tertiaryColor": null, "colorPattern": "plaid",
+    "size": "M", "brand": "Ralph Lauren", "material": "100% Cotton", "department": "Men",
+    "style": "Button-Up", "fit": "Regular", "closure": "Button-Up", "neckline": "Spread Collar",
+    "lining": null, "graphics": [], "keyDetails": ["Plaid"], "aesthetic": ["preppy"],
+    "description": "Ralph Lauren men's button-up shirt in blue and white plaid. Features a spread collar and button-up front. Made of 100% cotton with a regular fit through the body and long sleeves. Clean preppy styling throughout the shirt. Size M.",
+    "confidence": 0.96
+  },
+  {
+    "category": "Clothing", "itemType": "Jeans", "primaryColor": "Blue",
+    "secondaryColor": null, "tertiaryColor": null, "colorPattern": "solid",
+    "size": "32x32", "brand": "Levi's", "material": "Denim", "department": "Men",
+    "style": "Straight", "fit": "Regular", "closure": "Button Fly", "neckline": null,
+    "lining": null, "graphics": [], "keyDetails": ["Straight Leg"], "aesthetic": ["classic"],
+    "description": "Levi's men's straight leg jeans in a medium blue wash. Feature a button fly and five-pocket styling in classic denim. The wash is even with light fading at the thighs and a regular fit through the leg. Size 32x32.",
+    "confidence": 0.97
+  },
+  {
+    "category": "Bag", "itemType": "Handbag", "primaryColor": "Brown",
+    "secondaryColor": "Gold", "tertiaryColor": null, "colorPattern": "solid",
+    "size": null, "brand": "Coach", "material": "Leather", "department": "Women",
+    "style": "Shoulder", "fit": null, "closure": "Zip Top", "neckline": null,
+    "lining": "Fabric-Lined", "graphics": ["embossed Coach logo"], "keyDetails": ["Gold-Tone Hardware", "Genuine Leather"],
+    "aesthetic": ["classic"],
+    "description": "Coach women's handbag in brown leather with gold-tone hardware. Features a zip top closure, a single shoulder strap, and an embossed Coach logo on the front. Interior is fabric-lined with a zip pocket. The leather shows an even pebbled grain throughout.",
+    "confidence": 0.93
+  },
+  {
+    "category": "Accessory", "itemType": "Belt", "primaryColor": "Black",
+    "secondaryColor": "Silver", "tertiaryColor": null, "colorPattern": "solid",
+    "size": "34", "brand": null, "material": "Leather", "department": "Men",
+    "style": "Western", "fit": null, "closure": "Buckle", "neckline": null,
+    "lining": null, "graphics": ["tooled floral pattern"], "keyDetails": ["Silver-Tone Buckle", "Tooled Leather"],
+    "aesthetic": ["western"],
+    "description": "Men's black leather belt with a silver-tone buckle and a tooled floral pattern along the strap. The buckle is a classic frame style and the leather has a smooth finish with western styling. Labeled size 34 on the interior stamp.",
+    "confidence": 0.9
+  },
+  {
+    "category": "Accessory", "itemType": "Scarf", "primaryColor": "Red",
+    "secondaryColor": "Cream", "tertiaryColor": null, "colorPattern": "striped",
+    "size": null, "brand": null, "material": "Wool", "department": "Unisex",
+    "style": null, "fit": null, "closure": null, "neckline": null,
+    "lining": null, "graphics": [], "keyDetails": ["Fringed Ends"], "aesthetic": ["classic"],
+    "description": "Unisex scarf in red and cream stripes with fringed ends. The knit is soft wool with an even stripe pattern running the full length. Both ends finish with short twisted fringe and the edges are cleanly finished throughout the piece.",
+    "confidence": 0.88
+  },
+  {
+    "category": "Jewelry", "itemType": "Necklace", "primaryColor": "Gold",
+    "secondaryColor": null, "tertiaryColor": null, "colorPattern": "solid",
+    "size": null, "brand": null, "material": "Gold-Tone Metal", "department": "Women",
+    "style": "Chain", "fit": null, "closure": "Lobster Clasp", "neckline": null,
+    "lining": null, "graphics": ["engraved floral pendant"], "keyDetails": ["Gold-Tone", "Pendant"],
+    "aesthetic": ["minimalist"],
+    "description": "Women's gold-tone necklace with a thin cable chain and a small round pendant engraved with a floral motif. Closes with a lobster clasp. The chain has an even shine with no visible plating wear and the pendant hangs centered.",
+    "confidence": 0.85
+  },
+  {
+    "category": "Hat", "itemType": "Bucket Hat", "primaryColor": "Green",
+    "secondaryColor": null, "tertiaryColor": null, "colorPattern": "solid",
+    "size": null, "brand": "Nike", "material": "Cotton", "department": "Unisex",
+    "style": null, "fit": null, "closure": null, "neckline": null,
+    "lining": null, "graphics": ["embroidered white swoosh"], "keyDetails": ["Embroidered Logo"],
+    "aesthetic": ["streetwear"],
+    "description": "Nike unisex bucket hat in solid green cotton with an embroidered white swoosh on the front panel. The brim is stitched in concentric rows and the crown has metal eyelets on each side. Streetwear styling with a clean, even color throughout.",
+    "confidence": 0.94
+  }
+]

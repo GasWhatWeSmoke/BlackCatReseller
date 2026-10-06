@@ -1,0 +1,23 @@
+.viewer { position:fixed; inset:0; margin:auto; display:flex; flex-direction:column; width:min(1200px,calc(100vw - 24px)); height:calc(100vh - 24px); height:min(1100px,calc(100dvh - 24px)); max-height:calc(100dvh - 24px); overflow:auto; padding:16px; color:var(--text); background:var(--panel); border:1px solid var(--control-border); border-radius:var(--radius-lg); box-shadow:0 16px 60px #0009; }
+.viewer:not([open]) { display:none; }
+.viewer::backdrop { background:#000d; }
+.header,.footer,.footer>div { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.header { flex-shrink:0; margin-bottom:12px; }
+.header h2 { margin:0; font:700 17px var(--font-code); overflow-wrap:anywhere; }
+.header p,.footer>span { margin:4px 0 0; color:var(--muted); font-size:12px; }
+.zoom { display:flex; flex-shrink:0; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.zoom button { min-width:40px; padding:8px 10px; }
+.zoom button[aria-pressed=true] { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+.zoom output { min-width:48px; color:var(--muted); font:12px var(--font-code); }
+.frame { flex:1; width:100%; min-height:140px; overflow:auto; background:var(--input); border:1px solid var(--border); border-radius:var(--radius); }
+.frame:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
+.frame[data-pannable=true] { cursor:grab; overscroll-behavior:contain; }
+.frame[data-dragging=true] { cursor:grabbing; }
+.stage { position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; user-select:none; }
+.footer { flex-shrink:0; margin-top:12px; }
+.unavailable { width:100%; height:100%; min-height:80px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:12px; text-align:center; color:var(--muted); font-size:12px; }
+.unavailable button { max-width:100%; }
+.unavailable[data-compact=true] { padding:4px; overflow-wrap:anywhere; }
+.fitFrame { display:block; position:relative; width:100%; height:100%; overflow:hidden; container-type:size; }
+@media(max-width:560px) { .viewer { padding:12px; } .footer>div { width:100%; } .footer .btn { flex:1; min-width:0; font-size:12px; } }
+@media(pointer:coarse) { .zoom button { min-width:44px; } }

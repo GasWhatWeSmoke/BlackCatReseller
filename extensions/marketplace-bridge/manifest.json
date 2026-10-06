@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Black Cat Marketplace Bridge",
+  "version": "0.1.1",
+  "description": "Connect Black Cat to your open marketplace tabs. This version checks seller pages without publishing or changing listings.",
+  "permissions": ["scripting"],
+  "host_permissions": [
+    "https://www.depop.com/*", "https://www.ebay.com/*",
+    "https://www.etsy.com/*", "https://poshmark.com/*", "https://www.poshmark.com/*"
+  ],
+  "background": { "service_worker": "background.mjs", "type": "module" },
+  "content_scripts": [{ "matches": ["http://127.0.0.1/*"], "js": ["app-link.js"], "run_at": "document_start" }],
+  "action": { "default_title": "Connect Black Cat" }
+}

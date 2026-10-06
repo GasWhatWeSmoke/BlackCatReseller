@@ -1,0 +1,162 @@
+{
+  "name": "black-cat-agent",
+  "version": "2.0.0-beta.2",
+  "private": true,
+  "description": "Local-first clothing-resale inventory & photo-intake desktop app (Electron + Next.js + Python worker)",
+  "author": "Black Cat",
+  "main": "electron/main.js",
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "e2e": "node scripts/run-e2e.mjs",
+    "e2e:failure": "node scripts/run-e2e.mjs failure",
+    "e2e:sidecar": "node scripts/run-e2e.mjs sidecar",
+    "dev:next": "next dev -H 127.0.0.1 -p 41999",
+    "dev:electron": "wait-on tcp:41999 && cross-env BLACKCAT_DEV=1 electron .",
+    "dev": "concurrently -k -n next,electron -c blue,magenta \"npm:dev:next\" \"npm:dev:electron\"",
+    "build:next": "node scripts/build-icons.mjs && prisma generate && next build",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch.ps1",
+    "start:next": "next start -H 127.0.0.1 -p 41999",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "db:init": "node scripts/init-db.mjs",
+    "hardware": "node scripts/hardware-report.mjs",
+    "db:template": "node scripts/build-template.mjs",
+    "db:schema-sync": "node scripts/schema-sync.mjs",
+    "worker:setup": "powershell -ExecutionPolicy Bypass -File worker/setup.ps1",
+    "vision:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-local-vision.ps1",
+    "vision:setup:q6": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-local-vision-q6.ps1",
+    "vision:benchmark": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-local-vision.ps1",
+    "vision:benchmark:q6": "npm run vision:setup && npm run vision:setup:q6 && node scripts/run-local-vision-benchmark.mjs --model-profile q6",
+    "pack": "node scripts/release.mjs",
+    "pack:zip": "node scripts/release.mjs",
+    "lint": "next lint",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.532.0",
+    "next": "15.5.25",
+    "react": "19.1.5",
+    "react-dom": "19.1.5",
+    "sharp": "^0.35.4",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^20.19.35",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "prisma": "^6.19.2",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
+    "wait-on": "^8.0.3"
+  },
+  "overrides": {
+    "postcss": "8.5.28",
+    "deepmerge-ts": "8.0.0",
+    "@electron/get": "5.1.0"
+  },
+  "build": {
+    "appId": "com.blackcat.agent",
+    "productName": "Black Cat Reseller",
+    "asar": false,
+    "files": [
+      "electron/**/*.{js,cjs,mjs}",
+      "!electron/**/*.test.*",
+      "extensions/marketplace-bridge/{manifest.json,*.mjs,app-link.js,README.md}",
+      ".next/**",
+      "!.next/cache{,/**}",
+      "!.next/trace",
+      "public/**",
+      "build/icon.png",
+      "build/tray.png",
+      "node_modules/**",
+      "!node_modules/.cache{,/**}",
+      "next.config.mjs",
+      "prisma/schema.prisma",
+      "prisma/migrations/**/migration.sql",
+      "prisma/migrations/migration_lock.toml",
+      "config/defaults.json",
+      "config/normalization.json",
+      "config/local-vision.json",
+      "config/local-vision-q6-benchmark.json",
+      "config/schema-manifest.json",
+      "config/template.db",
+      "scripts/init-db.mjs",
+      "scripts/schema-sync.mjs",
+      "scripts/setup-local-vision.ps1",
+      "scripts/setup-local-vision-q6.ps1",
+      "scripts/hardware-report.mjs",
+      "scripts/relocate_sqlite_paths.py",
+      "worker/setup.ps1",
+      "worker/requirements.txt",
+      "worker/black_cat_worker/**/*.{py,js,cjs,mjs}",
+      "!worker/black_cat_worker/scrub_props.py",
+      "!worker/.venv{,/**}",
+      "!worker/python{,/**}",
+      "!worker/**/__pycache__{,/**}",
+      "!worker/tests{,/**}",
+      "LICENSE.txt",
+      "THIRD_PARTY_NOTICES.txt",
+      "CHANGELOG.md",
+      "SETUP_FRIENDS.md",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/.prisma",
+        "to": "app/node_modules/.prisma"
+      },
+      {
+        "from": "public/beta-labels.html",
+        "to": "app/public/beta-labels.html"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "scripts/Setup Black Cat Agent.cmd",
+        "to": "Setup Black Cat Agent.cmd"
+      },
+      {
+        "from": "SETUP_FRIENDS.md",
+        "to": "READ ME FIRST - Setup.md"
+      },
+      {
+        "from": "BETA-TEN-ITEMS.md",
+        "to": "BETA-TEN-ITEMS.md"
+      },
+      {
+        "from": "public/beta-labels.html",
+        "to": "BETA-TEN-LABELS.html"
+      },
+      {
+        "from": "scripts/Setup Optional Local AI.cmd",
+        "to": "Setup Optional Local AI.cmd"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": true,
+      "artifactName": "BlackCatReseller-v${version}-Setup.${ext}",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "differentialPackage": false,
+      "include": "assets/installer/manual-update.nsh"
+    },
+    "publish": null
+  }
+}

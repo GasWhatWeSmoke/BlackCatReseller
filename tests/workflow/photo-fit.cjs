@@ -1,0 +1,11 @@
+const fs=require('fs'),path=require('path'),root=path.resolve(__dirname,'../..').replaceAll('\\','/'),out=path.resolve(process.argv[2]);
+const entry=`import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
+import {ReviewPhotos} from '${root}/src/components/ReviewPhotos';
+import {PhotoImage} from '${root}/src/components/PhotoImage';
+import {PhotoViewer} from '${root}/src/components/PhotoViewer';
+const initial=['wide','portrait','square'].map((name,index)=>({id:index+1,storedPath:name,thumbPath:null,rotation:90,isCover:index===0,isMarker:false,includeInListing:true,sortOrder:index}));
+function Fixture(){const[photos,setPhotos]=useState(initial);const[view,setView]=useState(null);return <main style={{width:'calc(100% - 32px)',maxWidth:680,margin:16}}><ReviewPhotos photos={photos} sku="FIT-FIXTURE" disabled={false} onEnlarge={photo=>setView(photo.id)} onSelect={()=>{}} onChange={async(photo,patch)=>setPhotos(values=>values.map(p=>p.id===photo.id?{...p,...patch}:p))} onMove={async()=>{}} onRemove={async()=>{}}/><div aria-label="Retry frame" style={{width:220,height:180}}><PhotoImage src="/broken.png" alt="Retry fixture" rotation={90}/></div>{view!==null&&<PhotoViewer photos={photos} photoId={view} sku="FIT-FIXTURE" onSelect={setView} onClose={()=>setView(null)}/>}</main>};
+createRoot(document.getElementById('root')).render(<Fixture/>);`;
+fs.writeFileSync(path.join(out,'photo-fit.entry.tsx'),entry);
+const wp=require(root+'/node_modules/next/dist/compiled/webpack/webpack');wp.init();
+wp.webpack({mode:'development',devtool:false,entry:path.join(out,'photo-fit.entry.tsx'),output:{path:out,filename:'photo-fit.bundle.js'},resolve:{extensions:['.tsx','.ts','.js'],alias:{'@':root+'/src'},modules:[root+'/node_modules']},module:{rules:[{test:/\.tsx?$/,use:root+'/tests/workflow/ts-loader.cjs'},{test:/\.css$/,use:root+'/tests/workflow/css-loader.cjs'}]}},(error,stats)=>{if(error||stats.hasErrors()){console.error(error||stats.toString({all:false,errors:true}));process.exitCode=1;}});
