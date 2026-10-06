@@ -1,6 +1,6 @@
 {
   "name": "black-cat-agent",
-  "version": "2.0.0-beta.2",
+  "version": "2.0.0-beta.3",
   "private": true,
   "description": "Local-first clothing-resale inventory & photo-intake desktop app (Electron + Next.js + Python worker)",
   "author": "Black Cat",

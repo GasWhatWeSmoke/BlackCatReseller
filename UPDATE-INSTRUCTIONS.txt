@@ -1,0 +1,35 @@
+Black Cat Reseller - Windows installation and updates
+
+Official downloads:
+https://github.com/GasWhatWeSmoke/BlackCatReseller/releases
+
+FIRST INSTALL
+1. Download the Setup.exe from the release's Assets and run it.
+2. Open Getting started in Black Cat and install the photo worker.
+3. Try the ten-item practice guide before testing real garments or marketplace listings.
+4. Keep Auto Run off for the first batch. Optional local AI can be set up separately.
+
+LATER UPDATES
+1. Download the newer Setup.exe and read its release notes.
+2. Finish current work, save edits and check backup status.
+3. Choose Quit from Black Cat's system-tray menu. Closing the window leaves it running.
+4. Run the new Setup.exe using the same Windows account. No uninstall is needed.
+5. Check the app version, inventory, photos and saved settings after reopening.
+
+Keep the existing data folders. Inventory, photos, settings and downloaded tools
+are stored outside the installed program folder. Setup asks you to quit a running
+app instead of stopping active work. There is no automatic update checker.
+
+The installation folder contains READ ME FIRST - Setup.md and BETA-TEN-ITEMS.md.
+Windows 10/11 x64 is required. Chrome and a connected second monitor are required
+for browser marketplace automation. This beta is unsigned; if Windows blocks it,
+report the result rather than disabling security protections.
+
+For your first test on a separate PC, verify installation, photo-worker setup,
+real photo intake and an update with existing data. Practice results alone do
+not verify recognition accuracy or live marketplace actions.
+
+Report a problem:
+https://github.com/GasWhatWeSmoke/BlackCatReseller/issues/new/choose
+Include the app and Windows versions and reproduction steps. Remove private
+account, customer, photo and credential information from screenshots or logs.

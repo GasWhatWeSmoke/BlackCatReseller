@@ -1,7 +1,7 @@
 # Black Cat Reseller — Windows beta setup
 
 Black Cat manages clothing inventory, photos, review, browser crosslisting and
-sales locally on your Windows PC. This is a private beta for testing. A successful
+sales locally on your Windows PC. This is a Windows beta for testing. A successful
 practice exercise does not establish that your camera, AI or marketplaces work.
 Use [the ten-garment checklist](BETA-TEN-ITEMS.md) to record those results separately.
 
@@ -23,6 +23,12 @@ Use [the ten-garment checklist](BETA-TEN-ITEMS.md) to record those results separ
   can require downloads even after the Python packages have installed.
 
 ## Install and open
+
+Download the installer from the official
+[GitHub Releases page](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases).
+Choose the **Setup.exe** in the release's assets. GitHub's source-code ZIP is for
+developers; it does not install the program. The same installer supports a first
+installation and updates to an existing installation.
 
 1. For an installer, run **BlackCatReseller-v<version>-Setup.exe**. It installs
    for your Windows account and opens Black Cat; use its shortcut afterward.
@@ -137,7 +143,9 @@ Closing its window to the tray pauses automatic sale checks; minimizing alone do
 not. **Sync sales** requests an extra check. Failed removal verification requires
 attention and must not be treated as a completed removal.
 
-When you receive a newer **Setup.exe**:
+Get newer **Setup.exe** files from the same
+[Releases page](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases).
+Read the version's notes before updating:
 
 1. Finish photo processing, publishing or item removal and save your edits.
 2. Check backup status, then choose **Quit** from Black Cat's system-tray menu.

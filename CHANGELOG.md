@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-- Publish the source under the MIT license, copyright Nickolas Verdugo.
-- Add public setup, contribution, bug-report, and security-reporting instructions.
-- Include the MIT license in the next tester installer.
+## [2.0.0-beta.3] - 2026-10-06
+
+- First public Windows installer release on GitHub, with checksums, setup guidance
+  and instructions for later updates.
+- The installer includes the MIT license, copyright Nickolas Verdugo. Third-party
+  software keeps its original notices and licenses.
+- Public setup, contribution, bug-report, security-reporting and release instructions.
+- Official download links for first installation and later manual updates: finish
+  work, choose tray Quit, then run the newer installer with the same Windows account.
 
 ## [2.0.0-beta.2]
 
@@ -15,6 +21,5 @@
 - The installer waits for the user to quit the app before replacing program files.
 - Recover eligible marketplace removals after transient Chrome connection failures.
 
-The initial public source snapshot builds on this beta. Previously supplied private
-tester installers predate the MIT license change; a new installer will accompany
-the next tester release.
+Previously supplied private beta 2 installers predate the MIT license change.
+Beta 3 is the first public installer containing the MIT license.

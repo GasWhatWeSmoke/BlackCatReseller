@@ -8,8 +8,26 @@ inventory, crosslisting, and sales on your own computer.
 Created by **Nickolas Verdugo**. Open source under the [MIT License](LICENSE.txt).
 Bug reports, ideas, documentation improvements, and code contributions are welcome.
 
-**Status: Windows beta.** An installer with the MIT license will be published with
-the next tester release. You can build and run the source now using the steps below.
+**Status: Windows beta.** [Download the beta 3 Windows installer](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases/download/v2.0.0-beta.3/BlackCatReseller-v2.0.0-beta.3-Setup.exe).
+See [all releases and update notes](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases)
+and [system requirements](SYSTEM_REQUIREMENTS.md) before installing.
+
+## Install and update
+
+Run the downloaded **Setup.exe**, then open **Getting started** in the app to set up
+the photo worker and try the ten-item practice guide. Installer users do not need
+Git, Node.js, or a separate Python installation. Follow [the setup guide](SETUP_FRIENDS.md)
+and use [the beta checklist](BETA-TEN-ITEMS.md) to record results on your computer.
+
+For a later update, download the newer installer from **Releases**, finish current
+work, choose **Quit** from Black Cat's system-tray menu, and run the new installer
+with the same Windows account. No uninstall is needed. Keep your existing data
+folders; inventory, photos, settings, and downloaded tools live outside the program
+folder. Closing only the app window leaves it running, and Setup will ask you to quit.
+
+There is no automatic update checker. New releases are supplied as installer
+downloads. This beta is unsigned; if Windows blocks it, report the result using
+the setup guide rather than disabling security protections.
 
 ## What it does
 
@@ -67,6 +85,9 @@ It requires the generated template database and worker runtime from the setup st
 The release command creates a verified Windows installer and portable ZIP under
 `dist/`, using an isolated build database. Include a matching changelog entry before
 releasing a new version.
+
+Maintainers: follow [the release checklist](RELEASING.md) to verify and publish
+the installer and its matching source version.
 
 ## Help improve Black Cat
 
