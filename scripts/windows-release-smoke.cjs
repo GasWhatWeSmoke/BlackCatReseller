@@ -14,7 +14,7 @@ assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Run only on a disposable GitHu
 const [baseline, updated, output] = process.argv.slice(2).map(value => path.resolve(value));
 assert.ok(baseline && updated && output);
 fs.mkdirSync(output, { recursive: true });
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-ci-upgrade-'));
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-ci-upgrade-')));
 const database = path.join(root, 'data', 'black-cat.db');
 const media = path.join(root, 'var');
 const python = process.env.BLACKCAT_PYTHON;

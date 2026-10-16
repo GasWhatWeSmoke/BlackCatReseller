@@ -5,7 +5,29 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { acquireIntakeLease, intakeJobDir, intakeLeaseActive, latestIntakeJob, readIntakeJob,
-  saveIntakeJob, validIntakeJobId, type IntakeJob } from "./intakeJobStore.ts";
+  saveIntakeJob, validIntakeJobId, writeIntakeJson, type IntakeJob } from "./intakeJobStore.ts";
+
+test("atomic checkpoints survive transient Windows replacement locks without deleting the saved version", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-checkpoint-lock-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const filename = path.join(root, "checkpoint.json");
+  writeIntakeJson(filename, { revision: 1 });
+  const rename = fs.renameSync;
+  let attempts = 0;
+  const mocked = t.mock.method(fs, "renameSync", (source: fs.PathLike, destination: fs.PathLike) => {
+    assert.deepEqual(JSON.parse(fs.readFileSync(filename, "utf8")), { revision: 1 });
+    if (++attempts < 3) throw Object.assign(Error("Windows sharing lock"), { code: "EPERM" });
+    return rename(source, destination);
+  });
+  writeIntakeJson(filename, { revision: 2 }); mocked.mock.restore();
+  assert.equal(attempts, 3);
+  assert.deepEqual(JSON.parse(fs.readFileSync(filename, "utf8")), { revision: 2 });
+  assert.deepEqual(fs.readdirSync(root), ["checkpoint.json"]);
+  t.mock.method(fs, "renameSync", () => { throw Object.assign(Error("I/O failure"), { code: "EIO" }); });
+  assert.throws(() => writeIntakeJson(filename, { revision: 3 }), /I\/O failure/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(filename, "utf8")), { revision: 2 });
+  assert.deepEqual(fs.readdirSync(root), ["checkpoint.json"]);
+});
 
 test("job checkpoints survive reconstruction, are isolated per workspace, and reject traversal", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-jobs-"));

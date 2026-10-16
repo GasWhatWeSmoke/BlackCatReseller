@@ -24,7 +24,7 @@ function rejected(roots: ManagedWorkRoots): boolean {
   }
 }
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bca-work-roots-")));
+const sandbox = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "bca-work-roots-")));
 try {
   const roots: ManagedWorkRoots = {
     incomingPath: path.join(sandbox, "incoming"),

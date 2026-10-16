@@ -33,10 +33,10 @@ function load(filename: string, dependencies: Record<string, unknown>) {
 }
 
 async function fixture(t: TestContext) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-durable-integration-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-durable-integration-")));
   const database = path.join(root, "catalog.db"); fs.copyFileSync("config/template.db", database);
   const db = new PrismaClient({ datasources: { db: { url: `file:${database.replaceAll("\\", "/")}` } } });
-  t.after(async () => { await db.$disconnect(); assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir()));
+  t.after(async () => { await db.$disconnect(); assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir()));
     assert.ok(path.basename(root).startsWith("blackcat-durable-integration-")); fs.rmSync(root, { recursive: true, force: true }); });
   const settings = { dataRoot: root, incomingPath: path.join(root, "incoming"), processingPath: path.join(root, "processing"),
     archivePath: path.join(root, "archive"), needsReviewPath: path.join(root, "review"), readyPath: path.join(root, "ready"),
@@ -205,8 +205,8 @@ test("an orphaned live child blocks resume, source import, and corrections until
 });
 
 test("independent server processes recover stale leases and never overlap incoming-work ownership", { timeout: 20_000 }, async t => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-lease-processes-")));
-  t.after(() => { assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); });
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-lease-processes-")));
+  t.after(() => { assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); });
   const leases = path.join(root, "intake-jobs", "leases"); fs.mkdirSync(leases, { recursive: true });
   const stale = path.join(leases, "dead-owner.json");
   fs.writeFileSync(stale, JSON.stringify({ pid: 2_147_483_647, token: "dead-owner", jobId: crypto.randomUUID(), ticket: 1 }));

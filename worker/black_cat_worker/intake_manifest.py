@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import time
 from uuid import uuid4
 
 from . import dedup
@@ -46,7 +48,17 @@ def atomic_json(path, value):
             json.dump(value, handle, ensure_ascii=False, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, path)
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                os.replace(temp, path)
+                break
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EPERM, errno.EBUSY) or time.monotonic() >= deadline:
+                    raise
+                # Preserve the old checkpoint while Windows releases a transient
+                # scanner/reader lock. Replacement remains atomic throughout.
+                time.sleep(0.025)
         if hasattr(os, "O_DIRECTORY"):
             descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:

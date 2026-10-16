@@ -39,7 +39,18 @@ export function writeIntakeJson(filename: string, value: unknown): void {
   const fd = fs.openSync(temporary, "wx", 0o600);
   try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); }
   finally { fs.closeSync(fd); }
-  try { fs.renameSync(temporary, filename); }
+  try {
+    // Windows scanners and concurrent readers can briefly deny replacement.
+    // Retry the atomic rename; never unlink the previous checkpoint first.
+    const deadline = Date.now() + 2_000;
+    for (let attempt = 0; ; attempt++) {
+      try { fs.renameSync(temporary, filename); break; }
+      catch (error) {
+        if (!["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= deadline) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(50, 10 + attempt * 5));
+      }
+    }
+  }
   finally { try { fs.unlinkSync(temporary); } catch { /* rename consumed the temporary */ } }
 }
 

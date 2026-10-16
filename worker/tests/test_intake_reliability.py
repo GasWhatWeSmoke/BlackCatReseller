@@ -4,6 +4,7 @@ No synthetic test establishes recognition accuracy on the absent beta images.
 """
 from dataclasses import asdict
 from pathlib import Path
+import errno
 import os
 import sys
 import tempfile
@@ -15,6 +16,30 @@ from black_cat_worker import decode, dedup, intake_manifest as manifest, regions
 from black_cat_worker.grouping import DecodedPhoto, group_photos
 from black_cat_worker.exif_sort import order_photos
 from black_cat_worker.ocr_engine import OcrLine, extract_lines
+
+
+class CheckpointLockTests(unittest.TestCase):
+    def test_transient_replacement_lock_keeps_previous_checkpoint_until_atomic_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "checkpoint.json"
+            manifest.atomic_json(target, {"revision": 1})
+            replace = os.replace
+            calls = []
+            def locked_replace(source, destination):
+                self.assertEqual(manifest.read_json(target), {"revision": 1})
+                calls.append(1)
+                if len(calls) < 3:
+                    raise PermissionError(errno.EACCES, "Windows sharing lock")
+                return replace(source, destination)
+            with mock.patch.object(manifest.os, "replace", side_effect=locked_replace):
+                manifest.atomic_json(target, {"revision": 2})
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(manifest.read_json(target), {"revision": 2})
+            with mock.patch.object(manifest.os, "replace", side_effect=OSError(errno.EIO, "I/O failure")):
+                with self.assertRaises(OSError):
+                    manifest.atomic_json(target, {"revision": 3})
+            self.assertEqual(manifest.read_json(target), {"revision": 2})
+            self.assertEqual([p.name for p in Path(temporary).iterdir()], ["checkpoint.json"])
 
 
 def photo(index, value=None, **kwargs):

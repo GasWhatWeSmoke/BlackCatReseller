@@ -24,7 +24,7 @@ function load(filename: string, dependencies: Record<string, unknown>) {
 }
 
 test("HTTP disconnect and refresh detach observers while one service job finishes and persists", async t => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-job-lifecycle-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-job-lifecycle-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const settings = { dataRoot: root, incomingPath: path.join(root, "incoming"), processingPath: path.join(root, "processing"),
     archivePath: path.join(root, "archive"), needsReviewPath: path.join(root, "review"), readyPath: path.join(root, "ready"),
@@ -76,7 +76,7 @@ test("HTTP disconnect and refresh detach observers while one service job finishe
 });
 
 test("explicit cancel during queued checkpoint work prevents spawning and remains resumable", async t => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-job-cancel-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-job-cancel-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const settings = { dataRoot: root } as AppSettingsData;
   let releaseLookup!: (value: null) => void;

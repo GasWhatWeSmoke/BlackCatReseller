@@ -20,9 +20,9 @@ function database(file, sql = SQL) {
 }
 
 function fixture(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-template-test-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-template-test-')));
   t.after(() => {
-    assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir()));
+    assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir()));
     assert.ok(path.basename(root).startsWith('blackcat-template-test-'));
     fs.rmSync(root, { recursive: true, force: true });
   });

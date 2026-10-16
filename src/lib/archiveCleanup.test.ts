@@ -9,12 +9,12 @@ import { archivePreview,archiveResult } from './archiveCleanupView.ts';
 import { tryReserveIncomingMutation,releaseIncomingMutation,tryReserveIntake,releaseIntakePrep } from './worker.ts';
 
 async function fixture(t:TestContext){
-  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'blackcat-archive-safe-'))),projectRoot=path.join(root,'app'),dataRoot=path.join(root,'data');
+  const root=fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(),'blackcat-archive-safe-'))),projectRoot=path.join(root,'app'),dataRoot=path.join(root,'data');
   fs.mkdirSync(projectRoot);fs.mkdirSync(dataRoot);const file=path.join(dataRoot,'catalog.db');fs.copyFileSync('config/template.db',file);
   const db=new PrismaClient({datasources:{db:{url:`file:${file.replaceAll('\\','/')}`}}});
   const settings={dataRoot,incomingPath:path.join(dataRoot,'incoming'),processingPath:path.join(dataRoot,'processing'),readyPath:path.join(dataRoot,'ready'),needsReviewPath:path.join(dataRoot,'review'),archivePath:path.join(dataRoot,'archive'),backupsPath:path.join(dataRoot,'backups'),exportsPath:path.join(dataRoot,'exports'),logsPath:path.join(dataRoot,'logs'),pythonWorkerPath:path.join(projectRoot,'worker','python.exe')};
   for(const folder of [settings.incomingPath,settings.processingPath,settings.readyPath,settings.needsReviewPath,settings.archivePath,settings.backupsPath,settings.exportsPath,settings.logsPath])fs.mkdirSync(folder);
-  t.after(async()=>{await db.$disconnect();assert.equal(path.dirname(root),fs.realpathSync(os.tmpdir()));assert.ok(path.basename(root).startsWith('blackcat-archive-safe-'));fs.rmSync(root,{recursive:true,force:true});});
+  t.after(async()=>{await db.$disconnect();assert.equal(path.dirname(root),fs.realpathSync.native(os.tmpdir()));assert.ok(path.basename(root).startsWith('blackcat-archive-safe-'));fs.rmSync(root,{recursive:true,force:true});});
   const photo=(name:string,folder=settings.archivePath)=>{const file=path.join(folder,name);assert.ok(path.resolve(file).startsWith(root+path.sep));fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,Buffer.concat([Buffer.from([255,216,255]),Buffer.from(name)]));return file;};
   return {root,db,settings,context:{projectRoot,databasePath:file},photo};
 }
