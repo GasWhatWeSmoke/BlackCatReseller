@@ -23,7 +23,8 @@ export function readIntakeReview(settings: { dataRoot: string }, id: string) {
   const manifest = readReviewJson<IntakeManifest>(directory, "manifest.json");
   const verification = readReviewJson<IntakeVerification>(directory, "verification.json");
   const corrections = readReviewJson<IntakeCorrections>(directory, "corrections.json");
-  return { job, directory, manifest, verification, corrections };
+  const result = readReviewJson<{ problems?: { type?: string; message?: string; filename?: string }[] }>(directory, "result.json");
+  return { job, directory, manifest, verification, corrections, problems: result?.problems ?? [] };
 }
 
 /** Serve only an image named by this job's immutable source manifest. */

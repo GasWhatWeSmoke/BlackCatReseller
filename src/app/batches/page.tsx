@@ -8,6 +8,7 @@ import type { IntakeSnapshot } from "@/components/IntakeStatus";
 interface Review {
   job: NonNullable<IntakeSnapshot["job"]> & { committedPhotoIds?: string[]; forceNoAi?: boolean } | null;
   manifest?: IntakeManifest | null; verification?: IntakeVerification | null; corrections?: IntakeCorrections | null;
+  problems?: { type?: string; message?: string; filename?: string }[];
 }
 type EvidencePhoto = ManifestPhoto & { sku?: string | null; markerReviewReason?: string; markerEvidence?: unknown };
 const pageSize = 48;
@@ -81,6 +82,9 @@ export default function BatchReview() {
         <strong>{job.state.replaceAll("_", " ")} · {job.stage}</strong>
         <p>{manifest?.photos.length ?? 0} durably stored photos · {(verification?.photos as EvidencePhoto[] | undefined)?.filter(photo => photo.sku).length ?? 0} detected markers · {groups.length} validated groups · {unresolved.length} unresolved ranges</p>
         {job.summary && <p>{job.summary.itemsCreated ?? 0} items saved · {(job.summary.problems ?? 0) + (job.summary.collisions ?? 0)} review / error notices</p>}
+        {!!data?.problems?.length && <ul aria-label="Batch notices">{data.problems.map((problem, index) => <li key={index}>
+          {problem.message || problem.type || "A processing issue needs review."}{problem.filename ? ` · ${problem.filename}` : ""}
+        </li>)}</ul>}
         {job.error && <p role="alert">{job.error}</p>}
         <p className="muted">{running ? "You can visit other pages while this job runs. Stop processing before correcting the batch." : "Save corrections, then resume this same batch. Already saved item boundaries are protected."}</p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

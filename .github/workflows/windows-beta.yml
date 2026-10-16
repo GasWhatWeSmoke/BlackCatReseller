@@ -16,12 +16,20 @@ jobs:
   windows:
     runs-on: windows-2025
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell
     env:
       NEXT_TELEMETRY_DISABLED: '1'
       CHECKPOINT_DISABLE: '1'
       PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.local\playwright
     steps:
+      - name: Set Windows PowerShell module path
+        run: |
+          $modules = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
+          $env:PSModulePath = $modules
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "PSModulePath=$modules" + [Environment]::NewLine)
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -30,7 +38,6 @@ jobs:
       - name: Install application dependencies
         run: npm.cmd ci
       - name: Prepare database template and Python worker
-        shell: pwsh
         run: |
           npm.cmd run db:template
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -39,7 +46,6 @@ jobs:
       - name: Run required Windows tests
         run: npm.cmd test
       - name: Check actual printed sticker OCR
-        shell: pwsh
         run: |
           & worker/.venv/Scripts/python.exe scripts/verify-printed-sku.py --output .local/windows-smoke/printed-ocr
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -48,7 +54,6 @@ jobs:
       - name: Retrieve beta.8 upgrade fixture
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .local/beta8 | Out-Null
           $version = (Get-Content package.json | ConvertFrom-Json).version
@@ -64,7 +69,6 @@ jobs:
           7z x '.local/beta8/nsis/$PLUGINSDIR/app-64.7z' '-o.local/beta8/app' -y | Out-Null
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Verify packaged startup, upgrade and photo intake
-        shell: pwsh
         run: |
           $updated = (Get-ChildItem dist -Directory -Filter 'release-v*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
           $env:BLACKCAT_PYTHON = Join-Path $pwd 'worker/.venv/Scripts/python.exe'
@@ -77,6 +81,7 @@ jobs:
           name: windows-beta-${{ github.sha }}
           if-no-files-found: error
           retention-days: 14
+          include-hidden-files: true
           path: |
             dist/release-v*/*.exe
             dist/release-v*/*.zip
