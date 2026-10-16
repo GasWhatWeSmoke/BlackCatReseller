@@ -1,15 +1,32 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { inventoryState, inventoryStateFilter } from "./inventoryState.ts";
+import { inventoryOrderBy, inventorySqlFilter } from "./inventoryOrder.ts";
 
 export const INVENTORY_STATES = ["", "Needs review", "Ready", "Listed", "Sold", "Problem", "Archived", "Removed", "Previously listed"];
 export const INVENTORY_MARKETPLACES = ["", "ebay", "depop", "poshmark", "mercari", "etsy"];
+export const INVENTORY_SORTS = [
+  { value: "sku-asc", label: "SKU: lowest first" }, { value: "sku-desc", label: "SKU: highest first" },
+  { value: "newest", label: "Newest added" }, { value: "oldest", label: "Oldest added" },
+  { value: "brand", label: "Brand: A–Z" }, { value: "status", label: "Status: A–Z" },
+] as const;
+export type InventorySort = typeof INVENTORY_SORTS[number]["value"];
+export const INVENTORY_SORT_STORAGE_KEY = "blackcat.inventory.sort";
 export interface InventoryQuery {
   q: string; state: string; flagged: boolean; sku: string; brand: string; category: string; size: string; itemType: string;
   marketplace: string; priceField: "listed" | "sold"; priceMin: string; priceMax: string; batch: string;
-  dateField: "added" | "listed" | "sold"; dateFrom: string; dateTo: string; page: number; pageSize: number;
+  dateField: "added" | "listed" | "sold"; dateFrom: string; dateTo: string; page: number; pageSize: number; sort: InventorySort;
 }
 export const DEFAULT_INVENTORY_QUERY: InventoryQuery = { q: "", state: "", flagged: false, sku: "", brand: "", category: "", size: "",
-  itemType: "", marketplace: "", priceField: "listed", priceMin: "", priceMax: "", batch: "", dateField: "added", dateFrom: "", dateTo: "", page: 1, pageSize: 50 };
+  itemType: "", marketplace: "", priceField: "listed", priceMin: "", priceMax: "", batch: "", dateField: "added", dateFrom: "", dateTo: "", page: 1, pageSize: 50, sort: "sku-asc" };
+
+export function validInventorySku(value: string | null | undefined): boolean { return typeof value === "string" && value.length === 9 && /^BC-[0-9]{6}$/.test(value); }
+
+/** An explicit URL order wins over this installation's saved preference. */
+export function restoreInventoryQuery(params: URLSearchParams, savedSort: string | null): InventoryQuery {
+  const restored = new URLSearchParams(params);
+  if (!restored.has("sort") && INVENTORY_SORTS.some(sort => sort.value === savedSort)) restored.set("sort", savedSort!);
+  return parseInventoryQuery(restored);
+}
 
 function text(params: URLSearchParams, key: string, max = 100): string {
   const value = (params.get(key) ?? "").trim();
@@ -51,8 +68,9 @@ export function parseInventoryQuery(params: URLSearchParams): InventoryQuery {
     size: text(params, "size"), itemType: text(params, "itemType"), marketplace: text(params, "marketplace"), priceField: (params.get("priceField") || "listed") as InventoryQuery["priceField"], priceMin: text(params, "priceMin", 30),
     priceMax: text(params, "priceMax", 30), batch: text(params, "batch", 12), dateField: (params.get("dateField") || "added") as InventoryQuery["dateField"],
     dateFrom: text(params, "dateFrom", 10), dateTo: text(params, "dateTo", 10), page: positive(params.get("page"), 1, 1_000_000),
-    pageSize: positive(params.get("pageSize"), 50, 100) };
-  if (!INVENTORY_STATES.includes(query.state) || !INVENTORY_MARKETPLACES.includes(query.marketplace) || !["added", "listed", "sold"].includes(query.dateField) || !["listed", "sold"].includes(query.priceField))
+    pageSize: positive(params.get("pageSize"), 50, 100), sort: (params.get("sort") || "sku-asc") as InventorySort };
+  if (!INVENTORY_STATES.includes(query.state) || !INVENTORY_MARKETPLACES.includes(query.marketplace) || !["added", "listed", "sold"].includes(query.dateField) || !["listed", "sold"].includes(query.priceField)
+    || !INVENTORY_SORTS.some(sort => sort.value === query.sort))
     throw new Error("Choose supported inventory filters.");
   const min = money(query.priceMin), max = money(query.priceMax);
   if (min !== undefined && max !== undefined && min > max) throw new Error("Minimum price must not exceed maximum price.");
@@ -65,7 +83,7 @@ export function inventoryQueryString(query: InventoryQuery): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (key === "flagged") { if (value) params.set(key, "1"); }
-    else if (value !== "" && value !== DEFAULT_INVENTORY_QUERY[key as keyof InventoryQuery]) params.set(key, String(value));
+    else if (key === "sort" || value !== "" && value !== DEFAULT_INVENTORY_QUERY[key as keyof InventoryQuery]) params.set(key, String(value));
   }
   return params.toString();
 }
@@ -119,7 +137,17 @@ export async function inventoryPage(db: Pick<PrismaClient, "$transaction">, quer
   return db.$transaction(async tx => {
     const where = inventoryWhere(query), total = await tx.item.count({ where });
     const pages = Math.max(1, Math.ceil(total / query.pageSize)), page = Math.min(query.page, pages);
-    const rows = await tx.item.findMany({ where, orderBy: { sku: "asc" }, skip: (page - 1) * query.pageSize, take: query.pageSize, select: SUMMARY_SELECT });
+    const filter = inventorySqlFilter(where);
+    // Sort the full matching set in SQLite, then load only this page's summaries.
+    // SQL structure comes from fixed allowlists; user values remain parameters.
+    const ordered = await tx.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT i."id" FROM "Item" i WHERE ${filter.sql} ORDER BY ${inventoryOrderBy(query.sort)} LIMIT ? OFFSET ?`,
+      ...filter.values, query.pageSize, (page - 1) * query.pageSize);
+    const found = ordered.length ? await tx.item.findMany({ where: { id: { in: ordered.map(row => row.id) } }, select: SUMMARY_SELECT }) : [];
+    const byId = new Map(found.map(row => [row.id, row]));
+    const rows = ordered.map(row => byId.get(row.id)!);
+    const skuCounts = rows.length ? await tx.item.groupBy({ by: ["sku"], where: { sku: { in: rows.map(row => row.sku) } }, _count: { _all: true } }) : [];
+    const duplicates = new Set(skuCounts.filter(row => row._count._all > 1).map(row => row.sku));
     // A nested relation count aggregates the whole Photo table in SQLite. Count
     // only this page's IDs, keeping exact totals without scanning old inventory.
     const counts = rows.length ? await tx.photo.groupBy({ by: ["itemId", "includeInListing"], where: { itemId: { in: rows.map(row => row.id) }, isMarker: false }, _count: { _all: true } }) : [];
@@ -128,7 +156,7 @@ export async function inventoryPage(db: Pick<PrismaClient, "$transaction">, quer
       allPhotos.set(count.itemId, (allPhotos.get(count.itemId) ?? 0) + count._count._all);
       if (count.includeInListing) selected.set(count.itemId, count._count._all);
     }
-    return { items: rows.map(row => ({ id: row.id, sku: row.sku, status: row.status, displayStatus: inventoryState(row),
+    return { items: rows.map(row => ({ id: row.id, sku: row.sku, skuNeedsReview: !validInventorySku(row.sku), duplicateSku: duplicates.has(row.sku), status: row.status, displayStatus: inventoryState(row),
       title: row.customTitle || row.finalTitle || row.niftyTitle || row.marketplaceListings.find(listing => ["published", "sold"].includes(listing.status) && listing.title)?.title || [row.brand, row.itemType, row.color, row.size].filter(Boolean).join(" "),
       brand: row.brand, size: row.size, itemType: row.itemType, category: row.category, color: row.color, pattern: row.pattern,
       listedPrice: row.listedPrice, salePrice: row.salePrice, platformSold: row.platformSold, batchId: row.batchId,
@@ -150,11 +178,12 @@ export async function inventoryNeighbors(db: Pick<PrismaClient, "$transaction">,
     const total = await tx.item.count({ where });
     const matching = await tx.item.count({ where: { AND: [where, { id }] } });
     if (!matching) return { prev: null, next: null, index: -1, total, matches: false };
-    const [prev, next, index] = await Promise.all([
-      tx.item.findFirst({ where: { AND: [where, { sku: { lt: current.sku } }] }, orderBy: { sku: "desc" }, select: { id: true } }),
-      tx.item.findFirst({ where: { AND: [where, { sku: { gt: current.sku } }] }, orderBy: { sku: "asc" }, select: { id: true } }),
-      tx.item.count({ where: { AND: [where, { sku: { lt: current.sku } }] } }),
-    ]);
-    return { prev: prev?.id ?? null, next: next?.id ?? null, index, total, matches: true };
+    const filter = inventorySqlFilter(where), order = inventoryOrderBy(query.sort);
+    const [neighbor] = await tx.$queryRawUnsafe<{ prev: bigint | number | null; next: bigint | number | null; position: bigint | number }[]>(
+      `WITH ordered AS (SELECT i."id", lag(i."id") OVER (ORDER BY ${order}) AS prev,
+        lead(i."id") OVER (ORDER BY ${order}) AS next, row_number() OVER (ORDER BY ${order}) - 1 AS position
+        FROM "Item" i WHERE ${filter.sql}) SELECT prev, next, position FROM ordered WHERE "id" = ?`, ...filter.values, id);
+    if (!neighbor) throw new Error("Inventory navigation could not be confirmed.");
+    return { prev: neighbor.prev == null ? null : Number(neighbor.prev), next: neighbor.next == null ? null : Number(neighbor.next), index: Number(neighbor.position), total, matches: true };
   });
 }

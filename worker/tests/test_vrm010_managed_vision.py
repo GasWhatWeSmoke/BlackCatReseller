@@ -97,10 +97,10 @@ class RecordingOpener:
 class ApiCredentialTests(unittest.TestCase):
     def test_relocated_assets_use_the_same_fixed_credential_and_session_lock(self):
         with tempfile.TemporaryDirectory(prefix="blackcat-vision-runtime-") as td:
-            root = pathlib.Path(td) / "persistent vision"
+            root = pathlib.Path(td).resolve() / "persistent vision"
             root.mkdir()
             credential = root / "api-key.txt"
-            credential.write_text(f"{'b' * 64}\n", encoding="utf-8", newline="\n")
+            credential.write_bytes(("b" * 64 + "\n").encode("utf-8"))
             with mock.patch.dict(os.environ, {"BLACKCAT_VISION_ROOT": str(root)}):
                 self.assertEqual(root.resolve(), managed.vision.local_vision_asset_root())
                 self.assertEqual("b" * 64, READ_LOCAL_VISION_API_KEY())
@@ -129,12 +129,12 @@ class ApiCredentialTests(unittest.TestCase):
             with mock.patch.object(managed.vision, "_LOCAL_VISION_API_KEY_FILE", credential):
                 with self.assertRaisesRegex(RuntimeError, "missing"):
                     READ_LOCAL_VISION_API_KEY()
-                credential.write_text(f"{'a' * 64}\n", encoding="utf-8", newline="\n")
+                credential.write_bytes(("a" * 64 + "\n").encode("utf-8"))
                 self.assertEqual("a" * 64, READ_LOCAL_VISION_API_KEY())
-                credential.write_text(f"{'A' * 64}\n", encoding="utf-8", newline="\n")
+                credential.write_bytes(("A" * 64 + "\n").encode("utf-8"))
                 with self.assertRaisesRegex(RuntimeError, "invalid"):
                     READ_LOCAL_VISION_API_KEY()
-                credential.write_text(f"{'a' * 64}\n\n", encoding="utf-8", newline="\n")
+                credential.write_bytes(("a" * 64 + "\n\n").encode("utf-8"))
                 with self.assertRaisesRegex(RuntimeError, "invalid"):
                     READ_LOCAL_VISION_API_KEY()
 
@@ -735,7 +735,7 @@ class IntakeOrderingTests(unittest.TestCase):
 
     def test_direct_worker_validates_missing_roots_without_creating_them(self):
         with tempfile.TemporaryDirectory() as tmp:
-            data = pathlib.Path(tmp, "fresh")
+            data = pathlib.Path(tmp).resolve() / "fresh"
             roots = {
                 "incomingPath": str(data / "incoming"),
                 "processingPath": str(data / "processing"),

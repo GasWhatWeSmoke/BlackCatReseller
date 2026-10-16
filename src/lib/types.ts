@@ -149,6 +149,8 @@ export interface PublishSettings {
   etsy?: { enabled: boolean; autoPost?: boolean; shippingProfileName: string; autoRenew?: boolean };
   /// Browser-only eBay path; independent of the dormant API configuration above.
   ebayBrowser?: { enabled: boolean; autoPost?: boolean; shippingPolicyName?: string; returnPolicyName?: string; paymentPolicyName?: string; generalAdRate?: number | null };
+  /// Existing account policies read from the user's connected Chrome (beta8).
+  ebayPolicyCatalog?: { readAt: string; complete: true; policies: { kind: "shipping" | "return" | "payment"; name: string; isDefault: boolean }[] };
   /// Seconds between listings PER MARKETPLACE (§45.20). Reliability over speed.
   pacingSeconds?: number;      // default 8
   /// Attempts per job before a retryable error becomes a failure (§45.21).
@@ -268,8 +270,8 @@ export interface WorkerPhoto {
 export interface ItemGrouping {
   confidence: "high" | "medium" | "low";
   reasons: string[];
-  closedBy: "qr-marker" | "ocr-marker" | "unreadable-sticker" | "recovered-sticker" | "end-of-batch";
-  orderSource: "exif" | "filename" | "filename-mixed";
+  closedBy: "qr-marker" | "ocr-marker" | "manual-marker" | "unreadable-sticker" | "recovered-sticker" | "end-of-batch";
+  orderSource: "exif" | "filename" | "filename-mixed" | "manual";
   log: {
     file: string;
     role: string;

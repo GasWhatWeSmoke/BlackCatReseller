@@ -104,7 +104,8 @@ export function runDelistWorker(settings: AppSettingsData, request: RemovalReque
       if (stopping) return;
       stopping = true;
       if (process.platform === "win32" && child.pid) {
-        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill());
+        // Chrome may contain other operator work; terminate only this worker.
+        spawn("taskkill", ["/pid", String(child.pid), "/F"], { windowsHide: true }).on("error", () => child.kill());
       } else child.kill("SIGKILL");
     };
     const timer = setTimeout(() => {

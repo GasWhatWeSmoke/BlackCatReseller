@@ -2,7 +2,7 @@
 function sellerEditor(value) {
   const url = new URL(value);
   const etsy = url.hostname === 'www.etsy.com' && (/^\/your\/shops\/[^/]+\/listing-editor\/create$/.test(url.pathname) || ['/your/shops/me/tools/listings', '/your/orders/sold'].includes(url.pathname));
-  const ebay = url.hostname === 'www.ebay.com' && ['/lstng', '/sl/sell', '/sh/lst/active', '/sh/ord'].includes(url.pathname);
+  const ebay = url.hostname === 'www.ebay.com' && ['/lstng', '/sl/sell', '/sh/lst/active', '/sh/ord', '/bp/manage'].includes(url.pathname);
   const mercari = url.hostname === 'www.mercari.com' && ['/sell/', '/mypage/listings/active/'].includes(url.pathname);
   if (url.protocol !== 'https:' || url.username || url.password || url.port || (!etsy && !ebay && !mercari)) {
     throw new Error('A supported seller editor or inventory entry URL is required');

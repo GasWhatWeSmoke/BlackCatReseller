@@ -77,7 +77,7 @@ def scrub_raw(raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Set[str]]:
         # When a single photo was read, every line - the ruler included - was on it,
         # so the dropped print goes back on that photo and the pass below sees it.
         lines += [OcrLine(text, None, None, photos_read[0]) for text in ignored]
-    scrubbed = props.scrub_vision(raw)
+    scrubbed = props.scrub_vision(raw, explicit_prop_context=True)
     # A registration number (RN, CA, WPL) stored as the model or style number goes
     # here, before the evidence is rebuilt, so no record keeps claiming it.
     registrations = [key for key in ("model", "styleNumber") if tag_ocr.is_registration_number(raw.get(key))]
@@ -85,6 +85,14 @@ def scrub_raw(raw: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Set[str]]:
         raw[key] = None
     # Anything the reading would drop - the ruler's print, a measuring tool's bare
     # graduations - is reason enough to rewrite the record; a clean row is not.
+    # This operator-invoked historical repair already identifies these sources
+    # as tool photos. Preserve that explicit context in modern region routing.
+    prop_sources = {line.source for line in lines if is_prop(line)}
+    for line in lines:
+        if is_prop(line):
+            line.classification = "measuring_tool_branding"
+        elif line.source in prop_sources and line.text.strip().isdigit():
+            line.classification = "measurement_scale"
     reading = tag_ocr.interpret(lines) if lines else None
     if not scrubbed and not registrations and not (reading is not None and reading.props_ignored):
         return None, set()

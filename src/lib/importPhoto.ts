@@ -26,6 +26,7 @@ export async function writeIncomingPhoto(folder: string, name: string, bytes: Ui
     try {
       owned = await file.stat();
       await file.writeFile(bytes);
+      await file.sync();
       await file.close();
       return destination;
     } catch (error) {

@@ -68,6 +68,15 @@ class MercariNativeFormTests(unittest.TestCase):
     def tearDownClass(cls):cls.browser.close();cls.pw.stop()
 
     def setUp(self):
+        # The shipped app targets Windows. Exercise the same select-all gesture
+        # in macOS Chrome without changing the production Windows shortcut.
+        if sys.platform == 'darwin':
+            original_press = Locator.press
+            def platform_press(locator, key, *args, **kwargs):
+                return original_press(locator, 'Meta+A' if key == 'Control+A' else key, *args, **kwargs)
+            keyboard = patch.object(Locator, 'press', platform_press)
+            keyboard.start()
+            self.addCleanup(keyboard.stop)
         self.folder=tempfile.TemporaryDirectory();self.photo=str(Path(self.folder.name,'000001_01.jpg'))
         Image.new('RGB',(80,80),'blue').save(self.photo)
         self.image=Path(self.photo).read_bytes();self.wrong_price=False;self.smart_confirmation=False

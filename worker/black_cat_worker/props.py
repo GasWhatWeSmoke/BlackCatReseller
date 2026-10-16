@@ -1,28 +1,9 @@
-"""Studio props: the measuring tools that show up in photos and are not the item.
+"""Separate measuring-tool evidence from garment fields using spatial context.
 
-Every measurement photo has a metal ruler laid along the garment for scale, and
-the ruler carries its own maker's mark and model number - "Empire" and "Model
-403" - in the crispest machine print in the frame. Batch 39 shipped eight items
-with "Model 403" as their model or style number, three of them branded
-"Empire", across five real brands and four garment types. Both readers did what
-they were built to do: PaddleOCR read the sharpest text it could see, and the
-vision model, handed those lines as "text read off this item's tags", agreed
-with it. The ruler even ended the tag scan early - "MODEL 403" counts as a
-style number, and a style number is a stop signal - so the real tag a few
-frames back was never read at all.
-
-Neither reader can tell a ruler from a care label by looking. What CAN be known
-is which props this studio uses, so the rule is a short list of their print,
-and that list lives here and nowhere else. Two things are done with it:
-
-  * OCR lines that are a prop's print are dropped before anything is read off
-    them, along with the bare inch marks on the same photo (the ruler's
-    graduations were arriving as size candidates: "6", "8", "9", "10", "13").
-  * The vision answer is scrubbed after parsing: a prop maker as the brand, a
-    prop model as the model or style number, and any graphic, key detail, or
-    description sentence that describes the prop.
-
-When a new ruler or tape measure joins the setup, add its print to PROPS.
+Automatic OCR filtering preserves region locations and only excludes supported
+scale/tool/inventory regions. Tool names on garment labels are not blacklisted.
+The historical rule catalog remains for the explicit operator repair command;
+it does not establish item boundaries or automatically erase garment brands.
 """
 from __future__ import annotations
 
@@ -153,21 +134,17 @@ def split_prop_lines(
     pass over a stored row can only tell "116" was on the ruler photo if the
     ruler's own lines are still on record with that photo.
     """
-    prop_sources = {
-        line.source for line, text in zip(lines, normalized) if is_prop_line(text)
-    } | measure_photos(lines, normalized)
-    kept_lines: List[OcrLine] = []
-    kept_texts: List[str] = []
-    dropped_lines: List[OcrLine] = []
-    dropped: List[str] = []
-    for line, text in zip(lines, normalized):
-        if is_prop_line(text) or (line.source in prop_sources and _INCH_MARK_RE.fullmatch(text)):
+    from . import regions
+    classified = regions.classify(list(lines))
+    kept_lines, kept_texts, dropped_lines, dropped = [], [], [], []
+    for line, text in zip(classified, normalized):
+        if line.classification in {"measurement_scale", "measuring_tool_branding", "tool_identifier", "inventory_candidate", "inventory_sticker"}:
             dropped_lines.append(line)
             if text and text not in dropped:
                 dropped.append(text)
-            continue
-        kept_lines.append(line)
-        kept_texts.append(text)
+        else:
+            kept_lines.append(line)
+            kept_texts.append(text)
     return kept_lines, kept_texts, dropped_lines, dropped
 
 
@@ -213,9 +190,27 @@ def cross_check(
     is the mapped answer, cleared in step. Returns the keys cleared.
     """
     numbers = prop_numbers(reading)
-    if not numbers or not isinstance(parsed, dict):
+    if not isinstance(parsed, dict):
         return []
     touched: List[str] = []
+    blocked = {normalize.normalize_key(line.text) for line in getattr(reading, "dropped_lines", [])
+               if getattr(line, "classification", "unknown") in {"measuring_tool_branding", "tool_identifier", "inventory_candidate", "inventory_sticker"}}
+    supported = {normalize.normalize_key(line.text) for line in getattr(reading, "lines", [])}
+    blocked -= supported
+    for key in dict.fromkeys(("brand", "subBrand") + tuple(keys)):
+        if normalize.normalize_key(str(parsed.get(key) or "")) in blocked or normalize.normalize_key(str((fields or {}).get(key) or "")) in blocked:
+            parsed[key] = None
+            if isinstance(fields, dict):
+                fields.pop(key, None)
+            touched.append(key)
+    # The same contextual exclusions apply to prose and generated title details.
+    for key in ("title", "description", "graphics", "keyDetails", "aesthetic"):
+        value = parsed.get(key)
+        values = value if isinstance(value, list) else _SENTENCE_SPLIT_RE.split(value) if isinstance(value, str) else []
+        cleaned = [part for part in values if not any(re.search(r"\b" + re.escape(word) + r"\b", normalize.normalize_key(str(part))) for word in blocked if word)]
+        if cleaned != values:
+            parsed[key] = cleaned if isinstance(value, list) else " ".join(cleaned)
+            touched.append(key)
     for key in keys:
         value = parsed.get(key)
         mapped = fields.get(key) if isinstance(fields, dict) else None
@@ -308,28 +303,31 @@ def scrub_title(text: Optional[str]) -> Optional[str]:
     return re.sub(r"\s+", " ", out).strip()
 
 
-def scrub_vision(parsed: Dict) -> List[str]:
+def scrub_vision(parsed: Dict, *, explicit_prop_context: bool = False) -> List[str]:
     """Scrub a parsed vision answer in place. Returns the keys that were touched."""
     if not isinstance(parsed, dict):
         return []
     touched: List[str] = []
-    for key in ("brand", "subBrand"):
-        if is_prop_brand(parsed.get(key)):
-            parsed[key] = None
-            touched.append(key)
-    for key in ("model", "styleNumber"):
-        if is_prop_code(parsed.get(key)):
-            parsed[key] = None
-            touched.append(key)
+    # The operator-invoked repair command supplies explicit historical context.
+    # Automatic inference may never blacklist a garment brand by name alone.
+    if explicit_prop_context:
+        for key in ("brand", "subBrand"):
+            if is_prop_brand(parsed.get(key)):
+                parsed[key] = None
+                touched.append(key)
+        for key in ("model", "styleNumber"):
+            if is_prop_code(parsed.get(key)):
+                parsed[key] = None
+                touched.append(key)
     for key in ("graphics", "keyDetails", "aesthetic"):
         values = parsed.get(key)
         if isinstance(values, list):
-            cleaned = scrub_list(values)
+            cleaned = scrub_list(values) if explicit_prop_context else [value for value in values if not (isinstance(value, str) and _PROP_WORDS_RE.search(value))]
             if len(cleaned) != len(values):
                 parsed[key] = cleaned
                 touched.append(key)
     description = parsed.get("description")
-    if isinstance(description, str) and mentions_prop(description):
-        parsed["description"] = scrub_text(description)
+    if isinstance(description, str) and (mentions_prop(description) if explicit_prop_context else _PROP_WORDS_RE.search(description)):
+        parsed["description"] = scrub_text(description) if explicit_prop_context else " ".join(sentence for sentence in _SENTENCE_SPLIT_RE.split(description) if not _PROP_WORDS_RE.search(sentence))
         touched.append("description")
     return touched

@@ -1,0 +1,53 @@
+{
+  "baselineVersion": "2.0.0-beta.8",
+  "baselineInstallerSha256": "947d3c8fb89527468621005897b0e83881b842691a6bc09e5ce0c46ba96b521e",
+  "recoveredFiles": [
+    {
+      "path": "electron/preload.js",
+      "normalizedSha256": "f2273fdecfbff0c1df93cf2d2446d33416b694d8dad18622b0db646f1c0cf078"
+    },
+    {
+      "path": "worker/black_cat_worker/assisted_browser.py",
+      "normalizedSha256": "f84d34e0bfb36307ac53e173cdb8c028398426412aee85005fb5ce788b878975"
+    },
+    {
+      "path": "worker/black_cat_worker/chrome_editor.py",
+      "normalizedSha256": "7edd64df9325338e8ff91c66bc8975644dfddfe87657a9b4ddefe2effd7a349f"
+    },
+    {
+      "path": "worker/black_cat_worker/depop_form.py",
+      "normalizedSha256": "449d3e46c310fbb12ac196ec983a0048005099436ab933cb42d771a6f46c2426"
+    },
+    {
+      "path": "worker/black_cat_worker/ebay_form.py",
+      "normalizedSha256": "aa5a78baba8939c0bae97e1f76c53663f91fe5a83a4aef2ea425ced2b08c6d80"
+    },
+    {
+      "path": "worker/black_cat_worker/post_ebay.py",
+      "normalizedSha256": "985136343dc9afc0695cfb4f28b0d6963596b704da9541ca509d1dd06e86e69e"
+    },
+    {
+      "path": "worker/black_cat_worker/ebay_policies.py",
+      "normalizedSha256": "675c0d061646de50de4b7f51188c7082d966c263aa6ee11060ada504f6d2afdd"
+    },
+    {
+      "path": "worker/black_cat_worker/close_owned_target.cjs",
+      "normalizedSha256": "2d359ea94767bfe534fb48827a46b454610e8a2bfbbe1df9984a446531eecdf6"
+    },
+    {
+      "path": "worker/black_cat_worker/chrome_session_server.cjs",
+      "normalizedSha256": "f548a9d7bba9500bb2baa8726214e46729f3e13ee97b534f8bef2ab04967bea4"
+    },
+    {
+      "path": "worker/black_cat_worker/chrome_transport.cjs",
+      "normalizedSha256": "7456087d2bbd6c7d4ddefe1e23124f20a555599cf7632e8f4e8be44ad14e3d3e"
+    }
+  ],
+  "lineEndings": "CRLF normalized to LF; implementation bytes otherwise unchanged.",
+  "reconstructedFeatures": [
+    "Local diagnostic collection, redaction, export and opt-out",
+    "eBay business policy discovery, exact catalog choices and empty-field CAS merge",
+    "Marketplace links and confirmed unsold external withdrawal with repost suppression"
+  ],
+  "sourceLimitations": "Beta.8 TypeScript was recovered semantically from shipped compiled modules; the unpublished Windows checkout was unavailable. Inventory/OCR/grouping raw Python in beta.8 matched public beta.3 before this reliability change."
+}

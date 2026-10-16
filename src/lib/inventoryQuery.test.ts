@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_INVENTORY_QUERY, inventoryBackHref, inventoryDateRange, inventoryItemHref, inventoryNeighbors, inventoryPage,
-  inventoryQueryString, parseInventoryQuery, type InventoryQuery } from "./inventoryQuery.ts";
+  inventoryQueryString, parseInventoryQuery, restoreInventoryQuery, validInventorySku, type InventoryQuery } from "./inventoryQuery.ts";
 
 const query = (changes: Partial<InventoryQuery> = {}) => ({ ...DEFAULT_INVENTORY_QUERY, ...changes });
 
@@ -21,9 +21,88 @@ test("inventory filters round-trip through internal links without accepting redi
 test("invalid ranges, dates, states and unbounded pages fail before querying inventory", () => {
   for (const value of ["page=0", "page=-1", "page=1e6", "pageSize=101", "priceMin=30&priceMax=20", "priceMin=-1",
     "priceMin=Infinity", "priceMax=1.001", "dateFrom=2026-02-30", "dateFrom=2026-09-20&dateTo=2026-09-01",
-    "state=made-up", "marketplace=unknown", "batch=1.5", "dateField=shipped", "priceField=profit"])
+    "state=made-up", "marketplace=unknown", "batch=1.5", "dateField=shipped", "priceField=profit", "sort=sideways", "sort=sku;DROP TABLE Item"])
     assert.throws(() => parseInventoryQuery(new URLSearchParams(value)), value);
   assert.equal(parseInventoryQuery(new URLSearchParams("priceMin=.50&priceMax=25.")).priceMin, ".50");
+});
+
+test("saved sort is a fallback, explicit URL choices survive links, and invalid saved preferences are ignored", () => {
+  assert.equal(restoreInventoryQuery(new URLSearchParams(), null).sort, "sku-asc");
+  assert.equal(restoreInventoryQuery(new URLSearchParams("brand=Nike"), "newest").sort, "newest");
+  assert.equal(restoreInventoryQuery(new URLSearchParams("sort=sku-asc"), "newest").sort, "sku-asc");
+  assert.equal(restoreInventoryQuery(new URLSearchParams(), "not-a-sort").sort, "sku-asc");
+  for (const sort of ["sku-asc", "sku-desc", "newest", "oldest", "brand", "status"] as const) {
+    const saved = query({ sort, q: "Blue", page: 2 });
+    const url = new URL(inventoryBackHref(saved), "http://127.0.0.1");
+    assert.deepEqual(restoreInventoryQuery(url.searchParams, "oldest"), saved);
+  }
+});
+
+test("strict SKU validation does not reinterpret historical, missing, or malformed values", () => {
+  for (const value of ["BC-000000", "BC-000042", "BC-999999"]) assert.equal(validInventorySku(value), true, value);
+  for (const value of [null, undefined, "", "000042", "BC-42", "bc-000042", " BC-000042", "BC-000042\n", "BC-000042\0junk", "XBC-000042", "BC-0000421", "BC-OOOO42", "BC-１２３４５６"])
+    assert.equal(validInventorySku(value), false, String(value));
+});
+
+test("SQLite numerically sorts the full filtered set with unresolved values last, stable ties, and matching neighbors", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "blackcat-inventory-order-"));
+  const file = path.join(root, "test.db"); fs.copyFileSync("config/template.db", file);
+  const db = new PrismaClient({ datasources: { db: { url: `file:${file.replaceAll("\\", "/")}` } } });
+  t.after(async () => { await db.$disconnect(); assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("blackcat-inventory-order-")); fs.rmSync(root, { recursive: true, force: true }); });
+  const skus = ["BC-000042", "", "BC-000100", "000002", "BC-000010", "BC-7", "BC-000009", "bc-000001", "BC-000010X"];
+  const items = [];
+  for (const [index, sku] of skus.entries()) items.push(await db.item.create({ data: { sku,
+    brand: index % 2 ? "Alpha" : "zebra", status: index % 2 ? "Ready for Nifty" : "Photographed",
+    createdAt: new Date(2026, 0, 1 + Math.floor(index / 2)) } }));
+  await db.marketplaceListing.create({ data: { itemId: items[0].id, marketplace: "ebay", status: "published" } });
+  // A normal installation rejects duplicate assignment without altering the existing item.
+  await assert.rejects(db.item.create({ data: { sku: "BC-000042" } }), { code: "P2002" });
+  const original = await db.item.findMany({ orderBy: { id: "asc" } });
+  const valid = [items[6], items[4], items[0], items[2]], unresolved = [items[1], items[3], items[5], items[7], items[8]];
+  for (const sort of ["sku-asc", "sku-desc"] as const) {
+    const expected = [...(sort === "sku-asc" ? valid : [...valid].reverse()), ...unresolved];
+    const collected: number[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const result = await inventoryPage(db, query({ sort, page, pageSize: 2 }));
+      collected.push(...result.items.map(item => item.id));
+      for (const item of result.items) assert.equal(item.skuNeedsReview, unresolved.some(row => row.id === item.id));
+    }
+    assert.deepEqual(collected, expected.map(item => item.id), sort);
+    for (const [index, item] of expected.entries()) {
+      assert.deepEqual(await inventoryNeighbors(db, item.id, query({ sort, pageSize: 2 })), {
+        prev: expected[index - 1]?.id ?? null, next: expected[index + 1]?.id ?? null, index, total: expected.length, matches: true,
+      });
+    }
+    assert.deepEqual((await inventoryPage(db, query({ sort, q: "zebra", pageSize: 100 }))).items.map(item => item.id), expected.filter(item => item.brand === "zebra").map(item => item.id));
+  }
+  assert.deepEqual((await inventoryPage(db, query({ sort: "oldest" }))).items.map(item => item.id), items.map(item => item.id));
+  assert.deepEqual((await inventoryPage(db, query({ sort: "newest" }))).items.map(item => item.id), [...items].sort((a, b) => +b.createdAt - +a.createdAt || a.id - b.id).map(item => item.id));
+  for (const sort of ["newest", "oldest", "brand", "status"] as const) {
+    const page = await inventoryPage(db, query({ sort }));
+    for (const [index, item] of page.items.entries()) assert.equal((await inventoryNeighbors(db, item.id, query({ sort })))?.index, index);
+  }
+  assert.deepEqual((await inventoryPage(db, query({ sort: "brand" }))).items.map(item => item.brand), ["Alpha", "Alpha", "Alpha", "Alpha", "zebra", "zebra", "zebra", "zebra", "zebra"]);
+  assert.deepEqual((await inventoryPage(db, query({ sort: "status" }))).items.map(item => item.displayStatus), ["Listed", "Needs review", "Needs review", "Needs review", "Needs review", "Ready", "Ready", "Ready", "Ready"]);
+  assert.equal((await inventoryPage(db, query({ q: "' OR 1 = 1 --" }))).total, 0);
+  assert.deepEqual(await db.item.findMany({ orderBy: { id: "asc" } }), original);
+  const nulSku = await db.item.create({ data: { sku: "BC-000001\0junk" } });
+  for (const sort of ["sku-asc", "sku-desc"] as const) {
+    const page = await inventoryPage(db, query({ sort }));
+    assert.equal(page.items.at(-1)?.id, nulSku.id); assert.equal(page.items.at(-1)?.skuNeedsReview, true);
+  }
+  const inserted = await db.item.create({ data: { sku: "BC-000011" } });
+  assert.deepEqual((await inventoryPage(db, query({ page: 2, pageSize: 2 }))).items.map(item => item.sku), ["BC-000011", "BC-000042"]);
+  assert.equal((await inventoryNeighbors(db, inserted.id, query()))?.index, 2);
+  // Legacy/corrupted databases without the uniqueness index still surface the
+  // conflict and use immutable IDs for tied numeric keys; neither row is merged.
+  await db.$executeRawUnsafe('DROP INDEX "Item_sku_key"');
+  const duplicate = await db.item.create({ data: { sku: "BC-000042" } });
+  for (const sort of ["sku-asc", "sku-desc"] as const) {
+    const conflict = await inventoryPage(db, query({ sku: "BC-000042", sort, pageSize: 1, page: 2 }));
+    assert.equal(conflict.items[0].id, duplicate.id); assert.equal(conflict.items[0].duplicateSku, true);
+    assert.equal((await inventoryNeighbors(db, duplicate.id, query({ sku: "BC-000042", sort })))?.prev, items[0].id);
+  }
 });
 
 test("calendar end dates include the whole local day across daylight-saving changes", () => {

@@ -359,7 +359,14 @@ export interface IntakeHandle {
   cancel(): boolean;
 }
 
-export interface IntakeOptions { forceNoAi?: boolean }
+export interface IntakeOptions {
+  forceNoAi?: boolean;
+  jobDir?: string;
+  jobId?: string;
+  /** Service checkpoints receive pre-admission detection progress too. */
+  onProgress?: (event: Record<string, unknown>) => void;
+  onSpawn?: (pid: number) => void;
+}
 
 export interface IntakeProtocolCounts {
   admitted: number;
@@ -498,6 +505,7 @@ export function startIntake(settings: AppSettingsData, options: IntakeOptions = 
       seq: (globalReg.__bcaIntakeProgress?.seq ?? 0) + 1,
       event: bounded,
     };
+    options.onProgress?.(bounded);
     if (!progressOpen) return;
     for (const listener of listeners) {
       try { listener(bounded); } catch { /* observer failures never affect the worker */ }
@@ -571,12 +579,15 @@ export function startIntake(settings: AppSettingsData, options: IntakeOptions = 
     (child) => {
       reg = { child, cancelFile, cancelRequested: false, closed: closedCell.promise };
       globalReg.__bcaIntake = reg;
+      if (child.pid) options.onSpawn?.(child.pid);
     },
     {
       BLACKCAT_CANCEL_FILE: cancelFile,
       BLACKCAT_FORCE_NO_AI: options.forceNoAi ? "1" : "0",
       BLACKCAT_PARENT_PID: String(process.pid),
       BLACKCAT_PARENT_CREATION_TOKEN: "",
+      BLACKCAT_INTAKE_JOB_DIR: options.jobDir ?? "",
+      BLACKCAT_INTAKE_JOB_ID: options.jobId ?? "",
     },
   ).then(({ code, stderr, protocolIssue }) => {
     let terminalError: Error | null = null;

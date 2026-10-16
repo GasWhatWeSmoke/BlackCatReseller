@@ -17,6 +17,7 @@ import { AppearanceSettings } from "@/components/AppearanceSettings";
 import { BackupStatus } from "@/components/BackupStatus";
 import { BrandCleanup } from "@/components/BrandCleanup";
 import { ArchiveCleanup } from "@/components/ArchiveCleanup";
+import { DiagnosticSettings } from "@/components/DiagnosticSettings";
 import { usePolledRead } from "@/components/usePolledRead";
 import { useSettingsDraft } from "@/components/useSettingsDraft";
 import { describeSettingsValue, type GeneralSettingsField } from "@/lib/settingsDrafts";
@@ -162,6 +163,7 @@ export default function SettingsPage() {
       <p><Link className="btn" href="/setup">Getting started · tutorial & practice batch</Link></p>
       <div id="marketplaces"><MarketplaceAccounts key={recovery.saved!.dataRoot} workspace={recovery.saved!.dataRoot} /></div>
       <AppearanceSettings />
+      <DiagnosticSettings />
       <BackupStatus />
       <SaleMonitorControls />
       <BrowserHelp />

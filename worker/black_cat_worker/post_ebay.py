@@ -11,7 +11,7 @@ from . import config
 from .chrome_editor import new_chrome_editor
 from .direct_listing import canonical_item_and_photos, read_listing_input
 from .publish_guard import assert_publish_authorized
-from .ebay_form import CREATE_URL, open_form, attach_photos, fill_listing_fields, verify_listing_fields, image_key, norm, category_for, reviewed_inseam, reviewed_outer_shell_material
+from .ebay_form import CREATE_URL, open_form, attach_photos, fill_listing_fields, verify_listing_fields, image_key, norm, category_for, reviewed_inseam, reviewed_outer_shell_material, department_for, selector_literal
 
 
 def listing_id(value):
@@ -86,7 +86,7 @@ def verify_listing(page, url, filled, cover, timeout=30000):
     response = page.goto(url, wait_until='domcontentloaded', timeout=timeout)
     if not response or response.status != 200 or listing_id(page.url) != identifier:
         raise ValueError('eBay did not load the submitted listing')
-    heading = page.get_by_role('heading', name=re.compile(r'^(?:Details about\s+)?' + re.escape(filled['title']) + '$'), level=1)
+    heading = page.get_by_role('heading', name=re.compile(r'^(?:Details about\s+)?' + selector_literal(filled['title']) + '$'), level=1)
     expect(heading).to_be_visible(timeout=timeout)
     images = page.locator('.ux-image-carousel img, [data-testid="image-carousel"] img')
     expect(images).not_to_have_count(0, timeout=timeout)
@@ -115,8 +115,13 @@ def verify_listing(page, url, filled, cover, timeout=30000):
     for label in ['Brand','Department','Size','Size Type','Color','Sleeve Length','Skirt Length','Dress Length','Inseam','Outer Shell Material','Style']:
         if label not in filled['specifics']: continue
         aliases = [norm(label)] + (['usshoesize'] if label == 'Size' else ['colour','exteriorcolor'] if label == 'Color' else [])
-        actual = {norm(row['value']) for row in values if norm(row['label']) in aliases}
-        if actual != {norm(filled['specifics'][label])}: raise ValueError(f'eBay published {label} does not match the verified form')
+        normalize_value = (lambda value: norm(department_for(value))) if label == 'Department' else norm
+        try:
+            actual = {normalize_value(row['value']) for row in values if norm(row['label']) in aliases}
+            expected = {normalize_value(filled['specifics'][label])}
+        except ValueError:
+            raise ValueError(f'eBay published {label} does not match the verified form') from None
+        if actual != expected: raise ValueError(f'eBay published {label} does not match the verified form')
     crumbs = page.locator('nav[aria-label*="breadcrumb" i] a:visible,.seo-breadcrumb a:visible,.breadcrumbs a:visible')
     labels = [norm(value) for value in crumbs.all_inner_texts()]
     # The editor nests Boys under Kids; the public breadcrumb omits Kids.

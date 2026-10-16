@@ -37,7 +37,7 @@ class Decoder:
     def engine_status(self):
         return {"qr_opencv": True, "qr_pyzbar": True, "ocr_paddle": True}
     def decode(self, filename):
-        return (DecodeOutcome("000001", "000001", "qr-opencv", True)
+        return (DecodeOutcome("BC-000001", "BC-000001", "qr-opencv", True)
                 if Path(filename).name == "002.jpg" else DecodeOutcome(None, None, None))
 
 
@@ -89,7 +89,7 @@ class IntakeStabilityTests(unittest.TestCase):
     def test_young_marker_waits_then_closes_the_older_product_photo(self):
         with self.runtime(): result = self.run_worker()
         self.assertGreaterEqual(self.clock.elapsed, 2)
-        self.assertEqual(["000001"], [item["sku"] for item in result["items"]])
+        self.assertEqual(["BC-000001"], [item["sku"] for item in result["items"]])
         self.assertFalse(result["items"][0]["placeholder"])
         self.assertEqual(2, result["counts"]["photosProcessed"])
         self.assertEqual([False, True], [photo["isMarker"] for photo in result["items"][0]["photos"]])
@@ -147,7 +147,7 @@ class IntakeStabilityTests(unittest.TestCase):
     def test_dry_run_includes_young_files_without_waiting_or_writing(self):
         with self.runtime(): result = self.run_worker(dry=True)
         self.assertEqual(0, self.clock.elapsed)
-        self.assertEqual("000001", result["items"][0]["sku"])
+        self.assertEqual("BC-000001", result["items"][0]["sku"])
         self.assertFalse(Path(self.settings["processingPath"]).exists())
 
     def test_invalid_stability_values_fail_before_mutation(self):

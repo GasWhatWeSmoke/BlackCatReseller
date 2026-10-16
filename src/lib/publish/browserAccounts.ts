@@ -15,8 +15,11 @@ const marker = (settings: AppSettingsData, marketplace: BrowserMarketplace, kind
 export function browserAccountStatus(settings: AppSettingsData, marketplace: BrowserMarketplace) {
   let refreshedAt: string | null = null;
   try { refreshedAt = fs.statSync(marker(settings, marketplace, "ok")).mtime.toISOString(); } catch { /* not linked */ }
+  const catalog = settings.publish?.ebayPolicyCatalog;
+  const policiesLinked = marketplace === "ebay" && catalog?.complete === true && Number.isFinite(Date.parse(catalog.readAt));
+  if (policiesLinked) refreshedAt = catalog!.readAt;
   return {
-    marketplace, name: MARKETPLACE_NAMES[marketplace], loggedIn: refreshedAt != null, refreshedAt,
+    marketplace, name: MARKETPLACE_NAMES[marketplace], loggedIn: refreshedAt != null, refreshedAt, policiesLinked,
     loginInProgress: active.has(marketplace), awaitingConfirmation: fs.existsSync(marker(settings, marketplace, "pending")),
     error: errors.get(marketplace) ?? null,
   };

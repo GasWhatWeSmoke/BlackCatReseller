@@ -5,7 +5,7 @@ import unicodedata
 
 from .browser_form import _parse_capacity_oz
 from .petite_size import petite_size_base
-from .normalize import canonical_brand
+from .normalize import canonical_brand, canonical_color
 
 
 def normalized(value):
@@ -189,23 +189,69 @@ def _selected_colors(control):
         "els => els.map(e => e.getAttribute('aria-label').slice(7))")
 
 
+def color_candidates(value):
+    """Prefer a native shade, then explicit aliases and its broader color family."""
+    families = {"gray": "Grey", "multicolor": "Multi", "offwhite": "Cream",
+                "maroon": "Burgundy", "teal": "Blue", "olive": "Green", "beige": "Tan",
+                "navy": "Blue", "charcoal": "Grey", "burgundy": "Red", "cyan": "Blue",
+                "babyblue": "Blue", "powderblue": "Blue", "denimblue": "Blue",
+                "sage": "Green", "mint": "Green", "seafoam": "Green", "emerald": "Green",
+                "lavender": "Purple", "lilac": "Purple", "mauve": "Purple",
+                "coral": "Pink", "salmon": "Pink", "peach": "Orange", "rust": "Orange",
+                "taupe": "Brown", "cream": "White", "tan": "Brown", "silver": "Grey"}
+    raw = str(value or '').strip()
+    candidates = [raw]
+    key = normalized(raw)
+    if key in families:
+        candidates.append(families[key])
+    candidates.append(canonical_color(raw))
+    shade = re.fullmatch(
+        r'(?:(?:light|dark|pale|pastel|bright|deep|soft|dusty|neon|heather|washed|faded)+)'
+        r'(black|white|grey|gray|blue|green|red|pink|purple|yellow|orange|brown|beige|tan|cream|navy|teal|burgundy|khaki|gold|silver)', key)
+    if shade:
+        candidates.append(shade.group(1))
+        candidates.append(canonical_color(shade.group(1)))
+    # Follow only this explicit family table; never fuzzy-match an unrelated color.
+    for candidate in list(candidates):
+        family = families.get(normalized(candidate))
+        while family and family not in candidates:
+            candidates.append(family)
+            family = families.get(normalized(family))
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
 def _fill_colors(page, values):
-    aliases = {"gray": "Grey", "multicolor": "Multi", "offwhite": "Cream", "maroon": "Burgundy",
-               "teal": "Blue", "olive": "Green", "beige": "Tan"}
-    desired = []
-    for value in values:
-        if value:
-            name = aliases.get(normalized(value), value)
-            if normalized(name) not in {normalized(existing) for existing in desired}:
-                desired.append(name)
-    if len(desired) > 2:
-        raise ValueError("Depop accepts at most two colors")
+    requested = [value for value in values if str(value or '').strip()]
     control = page.get_by_role("combobox", name="Color", exact=True)
     if control.count() != 1:
-        if desired:
+        if requested:
             raise ValueError("Depop Color control was not found")
         return []
-    for selected in _selected_colors(control):
+    initial = _selected_colors(control)
+    # At Depop's two-color limit the remaining options may all be disabled.
+    # Free the slots before resolving against the currently selectable palette.
+    if len(initial) >= 2:
+        for selected in initial:
+            control.locator("xpath=..").get_by_role("button", name=f"Remove {selected}", exact=True).click()
+        initial = []
+    desired = []
+    if requested:
+        control, options = _open_options(page, "Color")
+        # Selected chips may be omitted from the menu. They are already native values.
+        available = options + [{"label": value} for value in initial
+                               if not any(normalized(option['label']) == normalized(value) for option in options)]
+        if not available:
+            raise ValueError("Depop Color choices are unavailable")
+        for value in requested:
+            choice = choose_option(available, color_candidates(value))
+            if not choice:
+                raise ValueError("No matching Depop Color option")
+            if normalized(choice['label']) not in {normalized(existing) for existing in desired}:
+                desired.append(choice['label'])
+        control.press("Escape")
+    if len(desired) > 2:
+        raise ValueError("Depop accepts at most two colors")
+    for selected in initial:
         if normalized(selected) not in {normalized(value) for value in desired}:
             control.locator("xpath=..").get_by_role("button", name=f"Remove {selected}", exact=True).click()
     for value in desired:
@@ -312,27 +358,23 @@ def select_package(page, weight):
 
 def select_brand(page, item, fields, options):
     brand = fields.get("brand")
-    if not brand:
-        raise ValueError("Depop brand is missing")
     # Use only the shared table's explicit aliases, never fuzzy suggestions.
-    aliases = list(dict.fromkeys([brand, canonical_brand(brand)]))
+    aliases = list(dict.fromkeys([brand, canonical_brand(brand)])) if brand else []
     for search in aliases:
         try:
             return _select_field(page, "Brand", aliases, search=search)
         except ValueError as error:
             if str(error) != "No matching Depop Brand option":
                 raise
-    approved = options.get("unlistedBrands", [])
-    if not isinstance(approved, list) or normalized(brand) not in {
-            normalized(value) for value in approved if isinstance(value, str)}:
-        raise ValueError(f"Depop does not offer {brand}; approve its Other fallback before posting") from None
-    # Unbranded is an approved absence of a maker, not a real brand to
-    # retain in copy; the shared description sanitizer removes that word.
-    if normalized(brand) != "unbranded" and (
-            normalized(brand) not in normalized(item.get("title")) or
-            normalized(brand) not in normalized(fields.get("description"))):
-        raise ValueError("The approved brand fallback must keep the real brand in title and description")
-    return _select_field(page, "Brand", ["Other"], search="Other")
+    # A missing catalog entry uses a real generic option, never a similar brand.
+    # Keep the reviewed item and listing copy intact; only Depop's selector changes.
+    for fallback in ["Other", "Unknown brand"]:
+        try:
+            return _select_field(page, "Brand", [fallback], search=fallback)
+        except ValueError as error:
+            if str(error) != "No matching Depop Brand option":
+                raise
+    raise ValueError("No matching Depop Brand option: Other or Unknown brand is unavailable")
 
 
 def configure_boost(page, enabled, verify_only=False):

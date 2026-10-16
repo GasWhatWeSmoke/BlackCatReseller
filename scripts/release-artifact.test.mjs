@@ -105,7 +105,7 @@ test('only quoted Next server module identifiers can retain a build-root path', 
 });
 
 test('only three exact Next required-server-files metadata values may retain the build root', () => {
-  const relative = 'resources/app/.next/required-server-files.json', sourceRoot = path.resolve('fixture-build-root');
+  const relative = 'resources/app/.next/required-server-files.json', sourceRoot = path.join(path.parse(os.tmpdir()).root, 'fixture-build-root');
   const metadata = { appDir: sourceRoot, config: { outputFileTracingRoot: sourceRoot, turbopack: { root: sourceRoot } } };
   const original = JSON.stringify(metadata);
   assert.deepEqual(inspectReleaseText(relative, original, { sourceRoot }), {
@@ -124,7 +124,7 @@ test('only three exact Next required-server-files metadata values may retain the
 });
 
 test('Next metadata allowance never permits user-home or explicitly private paths', () => {
-  const relative = 'resources/app/.next/required-server-files.json', sourceRoot = path.resolve('fixture-build-root');
+  const relative = 'resources/app/.next/required-server-files.json', sourceRoot = path.join(path.parse(os.tmpdir()).root, 'fixture-build-root');
   assert.throws(() => inspectReleaseText(relative, JSON.stringify({ appDir: os.homedir() }), { sourceRoot: os.homedir() }), /developer machine path/);
   assert.throws(() => inspectReleaseText(relative, JSON.stringify({ appDir: sourceRoot, private: path.join(os.homedir(), 'private') }), { sourceRoot }), /developer machine path/);
   assert.throws(() => inspectReleaseText(relative, JSON.stringify({ appDir: sourceRoot }), { sourceRoot, forbiddenText: [sourceRoot] }), /developer machine path/);
@@ -133,7 +133,7 @@ test('Next metadata allowance never permits user-home or explicitly private path
 });
 
 test('extensionless CSS entry IDs are limited to the generated manifest field and static CSS records', () => {
-  const relative = 'resources/app/.next/server/app/page_client-reference-manifest.js', sourceRoot = path.resolve('fixture-build-root');
+  const relative = 'resources/app/.next/server/app/page_client-reference-manifest.js', sourceRoot = path.join(path.parse(os.tmpdir()).root, 'fixture-build-root');
   const entry = path.join(sourceRoot, 'src/app/page');
   const wrap = value => 'globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/page"]=' + JSON.stringify(value);
   const valid = { entryCSSFiles: { [entry]: [{ inlined: false, path: 'static/css/abcdef.css' }] } };
@@ -151,7 +151,7 @@ test('extensionless CSS entry IDs are limited to the generated manifest field an
 });
 
 test('Prisma generated clients permit only their two exact build-time generator paths', () => {
-  const sourceRoot = path.resolve('fixture-build-root');
+  const sourceRoot = path.join(path.parse(os.tmpdir()).root, 'fixture-build-root');
   const config = { generator: { provider: { value: 'prisma-client-js' }, output: { value: path.join(sourceRoot, 'node_modules/@prisma/client'), fromEnvVar: null }, sourceFilePath: path.join(sourceRoot, 'prisma/schema.prisma') } };
   const wrap = value => 'const config = ' + JSON.stringify(value, null, 2) + '\nconfig.dirname = __dirname;\n';
   for (const name of ['edge', 'index', 'wasm']) {

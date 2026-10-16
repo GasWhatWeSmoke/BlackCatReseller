@@ -134,12 +134,13 @@ test("clipboard stays untouched after navigation during an image read or invalid
 
 test("an isolated preview rejects native setup, browser, clipboard and focus actions even from its owned frame",async()=>{
   const handlers=new Map();let effects=0;
+  const fixtureRoot=path.join(path.parse(process.cwd()).root,'fixture-preview');
   const effect=()=>{effects++;return true;};
   const electron={ipcMain:{handle:(name,handler)=>handlers.set(name,handler)},
     app:{requestSingleInstanceLock:()=>false,quit(){},getPath:()=> 'C:/fixture-home',setPath(){}},
     clipboard:{writeImage:effect},Notification:class{show(){effect();}}};
   const context=vm.createContext({__dirname,console,
-    process:{env:{BLACKCAT_PREVIEW:'1',BLACKCAT_PREVIEW_PORT:'53000',BLACKCAT_DATA_ROOT:'C:/fixture-preview/var',DATABASE_URL:'file:C:/fixture-preview/preview.db'}},
+    process:{env:{BLACKCAT_PREVIEW:'1',BLACKCAT_PREVIEW_PORT:'53000',BLACKCAT_DATA_ROOT:path.join(fixtureRoot,'var'),DATABASE_URL:'file:'+path.join(fixtureRoot,'preview.db')}},
     require:name=>name==='electron'?electron:name==='./workerSetup'?{createWorkerSetup:()=>({start:effect,status:()=>({state:'idle'}),stop:async()=>{}})}:
       name==='./nativeBoundary'?require(name):name.startsWith('./')?{}:require(name)});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'main.js'),'utf8'),context);

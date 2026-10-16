@@ -54,14 +54,15 @@ class DepopFormTests(unittest.TestCase):
                     depop_form.select_package(page, 6)
                 self.assertEqual(opened.call_count, 3)
 
-    def test_unbranded_fallback_accepts_sanitized_copy_only_with_explicit_approval(self):
+    def test_unbranded_fallback_requires_a_real_generic_option_and_preserves_copy(self):
         item = {"title": "Heroes & Villains graphic shirt"}
         fields = {"brand": "Unbranded", "description": "Black cotton graphic shirt."}
         with patch.object(depop_form, "_select_field", side_effect=ValueError("No matching Depop Brand option")):
-            with self.assertRaisesRegex(ValueError, "approve its Other fallback"):
+            with self.assertRaisesRegex(ValueError, "Other or Unknown brand is unavailable"):
                 depop_form.select_brand(None, item, fields, {})
         with patch.object(depop_form, "_select_field", side_effect=[ValueError("No matching Depop Brand option"), "Other"]):
-            self.assertEqual(depop_form.select_brand(None, item, fields, {"unlistedBrands": ["Unbranded"]}), "Other")
+            self.assertEqual(depop_form.select_brand(None, item, fields, {}), "Other")
+        self.assertEqual(fields, {"brand": "Unbranded", "description": "Black cotton graphic shirt."})
 
     def test_shipping_can_retry_an_uncommitted_selection_but_keeps_missing_choices_as_errors(self):
         page, control = MagicMock(), MagicMock()
@@ -124,25 +125,20 @@ class DepopFormTests(unittest.TestCase):
     def test_brand_lookup_never_uses_a_fuzzy_spelling_suggestion(self):
         with patch('black_cat_worker.normalize._index_for',return_value={'patagonia':'Patagonia'}), \
              patch.object(depop_form,'_select_field',side_effect=ValueError('No matching Depop Brand option')) as selected:
-            with self.assertRaisesRegex(ValueError,'approve'):
+            with self.assertRaisesRegex(ValueError,'Other or Unknown brand is unavailable'):
                 depop_form.select_brand(None,{}, {'brand':'Patagoni'}, {})
-        selected.assert_called_once_with(None,'Brand',['Patagoni'],search='Patagoni')
+        self.assertEqual([call.kwargs['search'] for call in selected.call_args_list], ['Patagoni','Other','Unknown brand'])
 
-    def test_missing_brand_requires_approval_and_preserved_actual_copy(self):
+    def test_missing_catalog_brand_uses_generic_selector_without_rewriting_reviewed_copy(self):
         item = {"title": "La Vida shirt"}
         fields = {"brand": "La Vida", "description": "La Vida original shirt"}
-        for options, title, description in [({}, item["title"], fields["description"]),
-                ({"unlistedBrands": ["Other Brand"]}, item["title"], fields["description"]),
-                ({"unlistedBrands": ["La Vida"]}, "shirt", fields["description"]),
-                ({"unlistedBrands": ["La Vida"]}, item["title"], "shirt")]:
-            with patch.object(depop_form, "_select_field", side_effect=ValueError("No matching Depop Brand option")) as selected:
-                with self.assertRaises(ValueError):
-                    depop_form.select_brand(None, {"title": title}, {**fields, "description": description}, options)
-                self.assertEqual(selected.call_count, 1)
         with patch.object(depop_form, "_select_field", side_effect=[ValueError("No matching Depop Brand option"), "Other"]) as selected:
-            self.assertEqual(depop_form.select_brand(None, item, fields, {"unlistedBrands": ["La Vida"]}), "Other")
+            self.assertEqual(depop_form.select_brand(None, item, fields, {}), "Other")
             self.assertEqual(selected.call_args.args, (None, "Brand", ["Other"]))
-        self.assertEqual(fields["brand"], "La Vida")
+        self.assertEqual(fields, {"brand": "La Vida", "description": "La Vida original shirt"})
+        self.assertEqual(item, {"title": "La Vida shirt"})
+        with patch.object(depop_form, "_select_field", side_effect=[ValueError("No matching Depop Brand option"),ValueError("No matching Depop Brand option"),"Unknown brand"]):
+            self.assertEqual(depop_form.select_brand(None,item,fields,{}),"Unknown brand")
 
     def test_brand_fallback_does_not_hide_widget_failures_or_accept_missing_other(self):
         for reason in ["Depop Brand selection was not confirmed", "The marketplace offered ambiguous matching options"]:
@@ -153,7 +149,7 @@ class DepopFormTests(unittest.TestCase):
         with patch.object(depop_form, "_select_field", side_effect=ValueError("No matching Depop Brand option")) as selected:
             with self.assertRaisesRegex(ValueError, "No matching"):
                 depop_form.select_brand(None, {"title": "La Vida"}, {"brand": "La Vida", "description": "La Vida"}, {"unlistedBrands": ["La Vida"]})
-            self.assertEqual(selected.call_count, 2)
+            self.assertEqual(selected.call_count, 3)
 
     def test_department_prevents_a_womens_tee_from_using_the_first_mens_option(self):
         options = [

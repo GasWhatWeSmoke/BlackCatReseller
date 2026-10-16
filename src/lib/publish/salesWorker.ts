@@ -50,7 +50,8 @@ export function runSalesWorker(settings: AppSettingsData, marketplace: SalesMark
       if (stopping) return;
       stopping = true;
       if (process.platform === "win32" && child.pid) {
-        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill());
+        // Chrome may contain other operator work; terminate only this worker.
+        spawn("taskkill", ["/pid", String(child.pid), "/F"], { windowsHide: true }).on("error", () => child.kill());
       } else child.kill("SIGKILL");
     };
     const timer = setTimeout(() => { errorMessage = "Sales scan timed out; coverage is unverified."; stop(); }, options.timeoutMs ?? 5 * 60 * 1000);

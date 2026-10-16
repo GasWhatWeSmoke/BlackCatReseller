@@ -1,0 +1,85 @@
+name: Build and verify Windows beta
+
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      CHECKPOINT_DISABLE: '1'
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.local\playwright
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install application dependencies
+        run: npm.cmd ci
+      - name: Prepare database template and Python worker
+        shell: pwsh
+        run: |
+          npm.cmd run db:template
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm.cmd run worker:setup
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run required Windows tests
+        run: npm.cmd test
+      - name: Check actual printed sticker OCR
+        shell: pwsh
+        run: |
+          & worker/.venv/Scripts/python.exe scripts/verify-printed-sku.py --output .local/windows-smoke/printed-ocr
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build verified Windows installer
+        run: npm.cmd run release
+      - name: Retrieve beta.8 upgrade fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .local/beta8 | Out-Null
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release download "v$version" --repo $env:GITHUB_REPOSITORY --pattern validation-baseline-beta8.zip --dir .local/beta8
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive .local/beta8/validation-baseline-beta8.zip .local/beta8/kit
+          $installer = (Get-ChildItem .local/beta8/kit -Filter '*Setup.exe').FullName
+          if (-not $installer) { throw 'Missing beta.8 baseline installer' }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '947d3c8fb89527468621005897b0e83881b842691a6bc09e5ce0c46ba96b521e') { throw 'Unexpected beta.8 fixture hash' }
+          7z x $installer '-o.local/beta8/nsis' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          7z x '.local/beta8/nsis/$PLUGINSDIR/app-64.7z' '-o.local/beta8/app' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify packaged startup, upgrade and photo intake
+        shell: pwsh
+        run: |
+          $updated = (Get-ChildItem dist -Directory -Filter 'release-v*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          $env:BLACKCAT_PYTHON = Join-Path $pwd 'worker/.venv/Scripts/python.exe'
+          node scripts/windows-release-smoke.cjs .local/beta8/app "$updated/win-unpacked" .local/windows-smoke
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Upload installer, checksums and validation evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-beta-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/release-v*/*.exe
+            dist/release-v*/*.zip
+            dist/release-v*/*.json
+            dist/release-v*/SHA256SUMS.txt
+            .local/windows-smoke/**

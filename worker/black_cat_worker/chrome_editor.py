@@ -35,6 +35,8 @@ def _owned_chrome_editor(playwright, editor_url, timeout, create):
         capability = "mercari-tools-v1"
     if bounds is not None:
         capability = "work-window-v1"
+    if editor_url == 'https://www.ebay.com/bp/manage':
+        capability = 'ebay-policies-v1'
     endpoint = (session_endpoint(capability) if create else session_endpoint()) + "?" + urlencode(
         {"editor": editor_url, **({"create": "1"} if create else {})})
     browser = None

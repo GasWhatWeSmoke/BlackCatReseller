@@ -382,10 +382,10 @@ function validateGrouping(
   if (new Set(reasons).size !== reasons.length) invalid();
   const closedBy = boundedString(object.closedBy, 32, { nonEmpty: true });
   if (![
-    "qr-marker", "ocr-marker", "unreadable-sticker", "recovered-sticker", "end-of-batch",
+    "qr-marker", "ocr-marker", "manual-marker", "unreadable-sticker", "recovered-sticker", "end-of-batch",
   ].includes(closedBy)) invalid();
   const orderSource = boundedString(object.orderSource, 32, { nonEmpty: true });
-  if (!["exif", "filename", "filename-mixed"].includes(orderSource)) invalid();
+  if (!["exif", "filename", "filename-mixed", "manual"].includes(orderSource)) invalid();
   const logValues = boundedArray(object.log, MAX_GROUP_LOG_ENTRIES);
   const log = logValues.map((entry) => {
     const row = exactObject(entry, ["file", "role", "time", "gapBeforeSec", "decode", "raw"]);
@@ -643,7 +643,11 @@ function validateWorkerResultInner(
   if ([...state.duplicateNames.values()].some((count) => count !== 0)) invalid();
   const needsReview = boundedArray(object.needsReview, MAX_NEEDS_REVIEW).map((entry) => {
     const review = exactObject(entry, ["originalFilename", "storedPath", "reason"]);
-    const stored = existingPathUnder(review.storedPath, needsReviewRoot, "file");
+    // Unresolved ranges stay in Incoming for recoverable review. Both allowed
+    // locations still undergo the same realpath/file checks.
+    let stored: ValidatedPath;
+    try { stored = existingPathUnder(review.storedPath, needsReviewRoot, "file"); }
+    catch { stored = existingPathUnder(review.storedPath, incomingRoot, "file"); }
     addUnique(state.filesystemPaths, stored.real);
     return {
       originalFilename: safeFilename(review.originalFilename),

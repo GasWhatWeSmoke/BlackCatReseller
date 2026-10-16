@@ -7,14 +7,14 @@ import { BulkItemEditor } from './BulkItemEditor';
 import { BulkItemArchive, type ArchiveRequest } from './BulkItemArchive';
 import { PhotoImage } from './PhotoImage';
 import { browserInventoryOperations, type InventoryOperations, type InventoryDeleteResult } from "@/lib/inventoryClient";
-import { DEFAULT_INVENTORY_QUERY, INVENTORY_MARKETPLACES, INVENTORY_STATES, inventoryBackHref, inventoryItemHref,
-  inventoryQueryString, parseInventoryQuery, type InventoryPage, type InventoryQuery, type InventorySummary } from "@/lib/inventoryQuery";
+import { DEFAULT_INVENTORY_QUERY, INVENTORY_MARKETPLACES, INVENTORY_SORTS, INVENTORY_SORT_STORAGE_KEY, INVENTORY_STATES, inventoryBackHref, inventoryItemHref,
+  inventoryQueryString, parseInventoryQuery, restoreInventoryQuery, type InventoryPage, type InventoryQuery, type InventorySort, type InventorySummary } from "@/lib/inventoryQuery";
 import { MARKETPLACE_NAMES } from "@/lib/publish/platforms";
 import { itemDeleteExpectation, type ItemDeleteExpectation } from '@/lib/itemDeleteSelection';
 import styles from "./InventoryBrowser.module.css";
 
-type Advanced = Omit<InventoryQuery, "q" | "state" | "flagged" | "page" | "pageSize">;
-const advancedFrom = ({ q: _q, state: _state, flagged: _flagged, page: _page, pageSize: _size, ...advanced }: InventoryQuery): Advanced => advanced;
+type Advanced = Omit<InventoryQuery, "q" | "state" | "flagged" | "page" | "pageSize" | "sort">;
+const advancedFrom = ({ q: _q, state: _state, flagged: _flagged, page: _page, pageSize: _size, sort: _sort, ...advanced }: InventoryQuery): Advanced => advanced;
 const money = (value: number | null) => value != null && Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
 const platformName = (name: string) => MARKETPLACE_NAMES[name as keyof typeof MARKETPLACE_NAMES] ?? name;
 const listingStatus = (status: string) => ({ published: "listed", sold: "sold", ended: "ended", not_published: "not listed",
@@ -34,11 +34,13 @@ const InventoryCard = memo(function InventoryCard({ item, href, selected, toggle
         <span className={styles.photoCount}>{item.selectedPhotoCount} selected / {item.photoCount} photos</span>
       </div>
       <div className={styles.body}>
-        <div className={styles.identity}><span className={styles.sku}>{item.sku}{item.flagged ? " · Flagged" : ""}</span>
+        <div className={styles.identity}><span className={styles.sku}>{item.sku || "SKU not assigned"}{item.flagged ? " · Flagged" : ""}</span>
           <span className={styles.price}>{item.status === "Sold" ? `Sold ${money(item.salePrice)}` : `Ask ${money(item.listedPrice)}`}</span></div>
         <h2 className={styles.title}>{item.title || "Item details not entered"}</h2>
         <div className={styles.facts}>{item.brand === "Unknown" ? "Brand not confirmed" : item.brand} · Size {item.size || "—"}<br />{item.category || "Category not set"}{item.itemType ? ` · ${item.itemType}` : ""}</div>
         <div className={styles.badges}><span data-status={item.displayStatus}>{item.displayStatus}</span>
+          {item.skuNeedsReview && <span className={styles.warning}>SKU needs review</span>}
+          {item.duplicateSku && <span className={styles.warning}>Duplicate SKU</span>}
           {review && item.needsAiReview && <span className={styles.warning}>AI details to review</span>}
           {review && (item.isShell || ["low", "medium"].includes(item.groupingConfidence ?? "")) && <span className={styles.warning}>Check grouping</span>}
           {item.selectedPhotoCount === 0 && item.status !== "Sold" && <span className={styles.warning}>No listing photos selected</span>}
@@ -94,7 +96,10 @@ export function InventoryBrowser({ operations = browserInventoryOperations }: { 
 
   useEffect(() => {
     const restore = () => {
-      try { const value = parseInventoryQuery(new URLSearchParams(window.location.search));
+      try {
+        let savedSort: string | null = null;
+        try { savedSort = window.localStorage.getItem(INVENTORY_SORT_STORAGE_KEY); } catch { /* Private browser mode may disable storage. */ }
+        const value = restoreInventoryQuery(new URLSearchParams(window.location.search), savedSort);
         setQuery(value); setSearch(value.q); setAdvanced(advancedFrom(value)); setUrlError(null); setSelected(new Set()); setConfirmation(null);
       } catch (error) { setUrlError(error instanceof Error ? error.message : "The inventory filters in this address are invalid."); }
       setInitialized(true);
@@ -127,6 +132,14 @@ export function InventoryBrowser({ operations = browserInventoryOperations }: { 
   }, [key, refresh, initialized, urlError, operations]);
 
   useEffect(() => { if (initialized && !urlError) window.history.replaceState(window.history.state, "", inventoryBackHref(query)); }, [key, initialized, urlError, query]);
+  useEffect(() => {
+    if (initialized && !urlError) try { window.localStorage.setItem(INVENTORY_SORT_STORAGE_KEY, query.sort); } catch { /* The URL still preserves the active sort. */ }
+  }, [query.sort, initialized, urlError]);
+  useEffect(() => {
+    const refreshIntake = () => setRefresh(value => value + 1);
+    window.addEventListener("blackcat:intake-updated", refreshIntake);
+    return () => window.removeEventListener("blackcat:intake-updated", refreshIntake);
+  }, []);
   useEffect(() => { if (confirmation) deleteDialog.current?.showModal(); else deleteDialog.current?.close(); }, [confirmation]);
   useEffect(() => { if (!deleting && (deleteOutcome || deleteError)) deletionResults.current?.focus(); }, [deleting, deleteOutcome, deleteError]);
   useEffect(() => {
@@ -144,7 +157,7 @@ export function InventoryBrowser({ operations = browserInventoryOperations }: { 
   const advancedCount = [query.sku, query.brand, query.category, query.size, query.itemType, query.marketplace, query.batch].filter(Boolean).length
     + (query.priceMin || query.priceMax ? 1 : 0) + (query.dateFrom || query.dateTo ? 1 : 0);
   const topFilter = (patch: Partial<InventoryQuery>) => changeQuery({ ...query, q: search.trim(), ...patch, page: 1 });
-  const reset = () => { setSearch(""); setAdvanced(advancedFrom(DEFAULT_INVENTORY_QUERY)); changeQuery({ ...DEFAULT_INVENTORY_QUERY }); setRefresh(value => value + 1); };
+  const reset = () => { setSearch(""); setAdvanced(advancedFrom(DEFAULT_INVENTORY_QUERY)); changeQuery({ ...DEFAULT_INVENTORY_QUERY, sort: query.sort }); setRefresh(value => value + 1); };
   const updateAdvanced = (name: keyof Advanced, value: string) => { setAdvanced(current => ({ ...current, [name]: value })); setSelected(new Set()); setFilterError(null); };
 
   async function removeConfirmed() {
@@ -168,7 +181,7 @@ export function InventoryBrowser({ operations = browserInventoryOperations }: { 
   }
 
   function newItem() {
-    setDialog({ title: "Create a new empty item", message: "Enter its SKU. You can move photos into it afterwards.", placeholder: "e.g. 000048", actionLabel: "Create",
+    setDialog({ title: "Create a new empty item", message: "Enter its SKU. You can move photos into it afterwards.", placeholder: "e.g. BC-000048", actionLabel: "Create",
       onSubmit: async sku => { try { const id = await operations.create(sku); window.location.href = `/inventory/${id}`; return null; }
         catch (error) { return error instanceof Error ? error.message : "The new item could not be confirmed."; } } });
   }
@@ -192,8 +205,11 @@ export function InventoryBrowser({ operations = browserInventoryOperations }: { 
       onChange={event => { setSearch(event.target.value); setSelected(new Set()); setConfirmation(null); }} />
       <select className="select" aria-label="Inventory state" value={query.state} disabled={deleting} onChange={event => topFilter({ state: event.target.value })}>
         {INVENTORY_STATES.map(state => <option key={state} value={state}>{state || "All states"}</option>)}</select>
+      <select className="select" aria-label="Inventory sort" value={query.sort} disabled={deleting} onChange={event => topFilter({ sort: event.target.value as InventorySort })}>
+        {INVENTORY_SORTS.map(sort => <option key={sort.value} value={sort.value}>{sort.label}</option>)}</select>
       <button className="btn" aria-pressed={query.flagged} disabled={deleting} onClick={() => topFilter({ flagged: !query.flagged })}>Flagged only</button>
       <button className="btn" disabled={deleting} onClick={reset}>Reset filters</button></div>
+    {query.sort.startsWith("sku-") && <p className={styles.hint}>Valid BC-000000 SKUs sort numerically. Missing or other SKU formats follow them and remain unchanged.</p>}
     <details className={styles.filters}><summary>More filters{advancedCount ? ` · ${advancedCount} active` : ""}</summary><div className={styles.filterGrid}>
       {([['sku','Exact SKU'],['brand','Brand contains'],['itemType','Item type contains'],['size','Exact size'],['category','Saved category'],['batch','Batch number']] as const).map(([name,label]) =>
         <label className={styles.field} key={name}>{label}<input className="input" aria-label={label} value={advanced[name]} disabled={deleting} maxLength={name === "sku" ? 32 : 100} onChange={event => updateAdvanced(name,event.target.value)} /></label>)}

@@ -264,9 +264,9 @@ def run_batch(
             if settings.get("visionEnabled", False) and settings.get("tagOcrEnabled", True):
                 try:
                     rotations = {photo["storedPath"]: photo["rotation"] for photo in item["photos"]
-                                 if not photo["isMarker"] and photo.get("rotation", 0)}
+                                 if photo.get("rotation", 0)}
                     tag_reading = tag_ocr.read_tags(
-                        [photo["storedPath"] for photo in item["photos"] if not photo["isMarker"]],
+                        [photo["storedPath"] for photo in item["photos"]],
                         settings, cancel_check=cancel_check,
                         **({"rotations": rotations} if rotations else {}),
                     )

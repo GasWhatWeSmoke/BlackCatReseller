@@ -1,7 +1,8 @@
 """EXIF reading + chronological sort.
 
 Sort order (per spec): EXIF DateTimeOriginal -> EXIF SubSecTimeOriginal ->
-natural filename -> filesystem mtime (last resort).  Never creation date alone.
+natural filename -> immutable original path as deterministic tie-breaker.
+Mutable filesystem timestamps never determine capture order.
 Pillow is imported lazily so pure-logic tests run without it.
 """
 from __future__ import annotations
@@ -47,6 +48,24 @@ def get_exif(path: str) -> Tuple[Optional[str], Optional[str], Optional[int], Op
             )
     except Exception:
         return (None, None, None, None)
+
+
+def get_capture_metadata(path: str) -> dict:
+    """Available camera/offset evidence; missing metadata remains unknown."""
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            exif = image.getexif()
+            result = {name: str(exif[tag]).strip()[:128] for tag,name in ((271,"cameraMake"),(272,"cameraModel")) if exif.get(tag)}
+            try:
+                child = exif.get_ifd(0x8769)
+                if child.get(36881):
+                    result["offsetTimeOriginal"] = str(child[36881])[:32]
+            except Exception:
+                pass
+            return result
+    except Exception:
+        return {}
 
 
 _NATURAL_RE = re.compile(r"(\d+)")
@@ -105,9 +124,9 @@ def order_photos(photos: List) -> str:
         p.ts = parse_exif_ts(p.exif_dto, p.exif_subsec)
     with_ts = sum(1 for p in photos if p.ts is not None)
     if photos and with_ts == len(photos):
-        photos.sort(key=lambda p: (p.ts, natural_key(p.filename), _safe_mtime(p.path)))
+        photos.sort(key=lambda p: (p.ts, natural_key(getattr(p, "source_filename", None) or p.filename), p.path.casefold()))
         return "exif"
-    photos.sort(key=lambda p: (natural_key(p.filename), _safe_mtime(p.path)))
+    photos.sort(key=lambda p: (natural_key(getattr(p, "source_filename", None) or p.filename), p.path.casefold()))
     return "filename" if with_ts == 0 else "filename-mixed"
 
 

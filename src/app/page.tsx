@@ -14,6 +14,8 @@ import { readSetupView, saveSetupChoice } from '@/lib/setupClient';
 import { dashboardStatsView, collisionPageView, problemPageView, dismissalResult, type DashboardProblem, type DashboardPage } from '@/lib/dashboardDataView';
 import styles from "./dashboard.module.css";
 import { averageItemSalePrice } from '@/lib/dashboardSales';
+import { useIntakeStatus } from '@/components/IntakeStatus';
+import { importPhotos } from '@/lib/importLifecycle';
 
 // The dashboard IS the intake surface (the old /upload tab was folded in here —
 // photo drops and the folder button both start here):
@@ -41,7 +43,9 @@ export default function Dashboard() {
   const resolvingRef = useRef(false);
   const dismissingRef = useRef(false);
   const [dismissing, setDismissing] = useState<number | 'all' | null>(null), [dismissError, setDismissError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const intakeStatus = useIntakeStatus();
+  const busy = localBusy || intakeStatus.data?.running === true;
   const [result, setResult] = useState<UploadResult | null>(null);
   const [progress, setProgress] = useState<IntakeProgress | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -94,7 +98,7 @@ export default function Dashboard() {
 
   // Group the just-imported /incoming photos into items. Reads the NDJSON progress STREAM
   // so the UI shows what's happening live (current SKU + counts), then reports the outcome.
-  async function processInto(t: string | number, force = false) {
+  async function processInto(t: string | number, force = false, resumeJobId?: string) {
     setProgress({ label: "Scanning photos…", pct: 1 });
     // The POST stays headless until the worker admits (after hashing/EXIF/decode).
     // Poll the snapshot until the stream opens, then let the stream drive.
@@ -111,13 +115,14 @@ export default function Dashboard() {
       const res = await fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
+        body: JSON.stringify({ force, ...(resumeJobId ? { resumeJobId } : {}) }),
       });
       const reader = res.body?.getReader();
       if (reader) {
         const dec = new TextDecoder();
         let buf = "";
         const handle = (ev: Record<string, unknown>) => {
+          if (ev.type === "job") return;
           if (ev.type === "done") { terminalCount += 1; summary = ev.summary as Summary; return; }
           if (ev.type === "cancelled") { terminalCount += 1; cancelled = true; return; }
           if (ev.type === "deferred") {
@@ -132,7 +137,7 @@ export default function Dashboard() {
             errorReason = ev.reason ? String(ev.reason) : null;
             return;
           }
-          if (ev.type === "progress") {
+          if (ev.type === "progress" || ev.type === "persisting") {
             if (!streamOpen) { streamOpen = true; stopPolling(); }
             const p = intakeStage(ev);
             if (p) setProgress(p);
@@ -176,7 +181,7 @@ export default function Dashboard() {
     setCancelling(false);
 
     if (cancelled) {
-      const m = "Cancelled — nothing was saved. The photos are still pending; use “Process them now” whenever you're ready.";
+      const m = "Processing stopped. Saved checkpoints and originals are retained. Open Batch verification to resume this job.";
       toast.message(m, { id: t, duration: 8000 });
       setResult({ ok: false, text: m, created: 0 });
       await load();
@@ -233,7 +238,7 @@ export default function Dashboard() {
       setBusy(true);
       const t = toast.loading("Importing folder…");
       try {
-        const res = await fetch("/api/import-folder", { method: "POST", body: JSON.stringify({ folderPath }) });
+        const res = await importPhotos("/api/import-folder", { method: "POST", body: JSON.stringify({ folderPath }) });
         const j = await res.json().catch(() => ({ ok: false, error: "Server error" }));
         if (!res.ok || !j.ok) {
           toast.error(j.error || "Import failed", { id: t, duration: 8000 });
@@ -273,8 +278,10 @@ export default function Dashboard() {
     const t = toast.loading(`Uploading ${files.length} photo(s)…`);
     try {
       const fd = new FormData();
-      for (const f of files) fd.append("files", f);
-      const res = await fetch("/api/import", { method: "POST", body: fd });
+      // Chromium directory uploads otherwise send the relative path as the
+      // multipart filename, which the server correctly rejects as a path.
+      for (const f of files) { fd.append("files", f, f.name); fd.append("sourceRelativePaths", f.webkitRelativePath || f.name); }
+      const res = await importPhotos("/api/import", { method: "POST", body: fd });
       const j = await res.json().catch(() => ({ imported: 0 }));
       if (!res.ok || !j.imported) {
         const message = j.error || "Upload failed — no photos imported.";
@@ -468,16 +475,21 @@ export default function Dashboard() {
         <div className="card" style={{ padding: 16, marginBottom: 20, borderColor: "var(--warn)", display: "flex", alignItems: "center", gap: 12 }}>
           <AlertTriangle size={18} color="var(--warn)" />
           <span style={{ flex: 1, fontSize: 14 }}>
-            <strong>{stats!.incomingCount} photo(s)</strong> are imported but not yet processed (an earlier run didn’t finish). Nothing is lost — pick up where it left off.
+            <strong>{stats!.incomingCount} photo(s)</strong> are present in Incoming. Process them to verify file access and grouping, or open the saved batch to review and resume it.
           </span>
           <button className="btn btn-primary" disabled={!statsRead.fresh} onClick={async () => {
             if (!statsRead.isFresh()) return;
             setBusy(true);
             const t = toast.loading("Processing pending photos…");
-            try { await processInto(t); } finally { setBusy(false); }
+            try {
+              const savedJob = intakeStatus.data?.job;
+              const resume = savedJob && ["failed", "interrupted", "cancelled", "completed_with_review"].includes(savedJob.state);
+              await processInto(t, resume ? savedJob.forceNoAi === true : false, resume ? savedJob.id : undefined);
+            } finally { setBusy(false); }
           }}>
             <Play size={15} /> Process them now
           </button>
+          {intakeStatus.data?.job && <Link className="btn" href={`/batches?job=${encodeURIComponent(intakeStatus.data.job.id)}`}>Review saved batch</Link>}
           <button
             className="btn btn-danger"
             disabled={!statsRead.fresh}

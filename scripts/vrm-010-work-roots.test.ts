@@ -24,7 +24,7 @@ function rejected(roots: ManagedWorkRoots): boolean {
   }
 }
 
-const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "bca-work-roots-"));
+const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bca-work-roots-")));
 try {
   const roots: ManagedWorkRoots = {
     incomingPath: path.join(sandbox, "incoming"),
@@ -75,23 +75,29 @@ try {
   const processRoute = fs.readFileSync(
     path.join(process.cwd(), "src/app/api/process/route.ts"), "utf8",
   );
-  check("intake validates roots before reserving or spawning",
+  check("the process route validates roots before starting the service-owned job",
     processRoute.indexOf("validateManagedWorkRoots(settings)") >= 0
-    && processRoute.indexOf("validateManagedWorkRoots(settings)") < processRoute.indexOf("tryReserveIntake()")
-    && processRoute.indexOf("validateManagedWorkRoots(settings)") < processRoute.indexOf("startIntake(settings"));
+    && processRoute.indexOf("validateManagedWorkRoots(settings)") < processRoute.indexOf("startIntakeJob(settings"));
   const workerSource = fs.readFileSync(path.join(process.cwd(), "src/lib/worker.ts"), "utf8");
   const startIntake = workerSource.slice(workerSource.indexOf("export function startIntake"));
   check("direct startIntake/runIntake callers cannot bypass work-root validation",
     startIntake.indexOf("validateManagedWorkRoots(settings)") >= 0
     && startIntake.indexOf("validateManagedWorkRoots(settings)") < startIntake.indexOf("spawnWorker("));
-  const cancelHook = processRoute.slice(processRoute.indexOf("async cancel()"));
-  check("stream cancellation waits for persistence pipeline cleanup",
-    cancelHook.indexOf("await pipelineDone") >= 0 && !cancelHook.includes("releaseIntakePrep()"));
-  const resultStart = processRoute.indexOf("const result = await intake.result");
-  const persistStart = processRoute.indexOf("await persistWorkerResult", resultStart);
-  check("a valid worker result persists even after client disconnect",
+  check("stream cancellation only detaches the listener without cancelling worker ownership",
+    /cancel\(\)\s*\{\s*unsubscribe\(\);\s*\}/.test(processRoute)
+    && !processRoute.includes("intake.cancel") && !processRoute.includes("req.signal")
+    && !processRoute.includes("releaseIntakePrep()"));
+  const service = fs.readFileSync(path.join(process.cwd(), "src/lib/intakeJobs.ts"), "utf8");
+  const launch = service.slice(service.indexOf("export function startIntakeJob"));
+  check("the service reserves work before spawning and owns its detached task",
+    launch.indexOf("tryReserveIntake()") >= 0 && launch.indexOf("tryReserveIntake()") < launch.indexOf("startIntake(settings")
+    && launch.indexOf("void (async () =>") >= 0 && !launch.includes("req.signal"));
+  const resultStart = launch.indexOf("result = await live.intake.result");
+  const persistStart = launch.indexOf("await persistWorkerResult", resultStart);
+  check("a valid worker result is checkpointed and persisted by the service after clients disconnect",
     resultStart >= 0 && persistStart > resultStart
-    && !/INTAKE_CANCELLED/.test(processRoute.slice(resultStart, persistStart)));
+    && launch.indexOf("writeIntakeJson(resultFile, result)", resultStart) < persistStart
+    && !/req\.signal|request\.signal/.test(launch.slice(resultStart, persistStart)));
 } finally {
   fs.rmSync(sandbox, { recursive: true, force: true });
 }

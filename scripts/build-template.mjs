@@ -88,7 +88,10 @@ export function buildTemplate({ root = ROOT, run = spawnSync, replaceFile = fs.c
   const beforeDb = snapshot(destination), beforeManifest = snapshot(manifestPath);
   const schemaText = fs.readFileSync(path.join(root, 'prisma/schema.prisma'), 'utf8');
   const prisma = path.join(root, 'node_modules/prisma/build/index.js');
-  const engine = path.join(root, 'node_modules/@prisma/engines', process.platform === 'win32' ? 'schema-engine-windows.exe' : 'schema-engine-debian-openssl-3.0.x');
+  const engineName = process.platform === 'win32' ? 'schema-engine-windows.exe'
+    : process.platform === 'darwin' ? `schema-engine-darwin${process.arch === 'arm64' ? '-arm64' : ''}`
+    : 'schema-engine-debian-openssl-3.0.x';
+  const engine = path.join(root, 'node_modules/@prisma/engines', engineName);
   if (!fs.existsSync(prisma) || !fs.existsSync(engine)) throw Error('Installed Prisma CLI/schema engine is missing; install project dependencies before generating a template.');
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-template-'));
   try {

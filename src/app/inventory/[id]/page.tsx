@@ -22,6 +22,8 @@ import { withExpectedItemValues } from "@/lib/itemEdits";
 import { itemDeleteExpectation, itemDeleteReceiptMatches } from '@/lib/itemDeleteSelection';
 import { useItemDraft } from "@/components/useItemDraft";
 import { DraftRecovery } from "@/components/DraftRecovery";
+import { AttributeEvidence } from "@/components/AttributeEvidence";
+import { MarketplaceLinks } from "@/components/MarketplaceLinks";
 import { PhotoImage } from "@/components/PhotoImage";
 import { PhotoViewer } from "@/components/PhotoViewer";
 import { useVocabulary, VocabularyNotice } from '@/components/useVocabulary';
@@ -50,6 +52,7 @@ interface Item {
   // v1.2 batch-reliability fields
   isShell: boolean; groupingConfidence: string | null; groupingLogJson: string | null; aiConfidence: number | null;
   flagged: boolean;
+  evidenceJson?: string | null;
 }
 
 interface GroupingReport {
@@ -605,6 +608,7 @@ export default function ItemDetail() {
         </details>
       ) : null}
 
+      <AttributeEvidence evidenceJson={item.evidenceJson} />
       {/* Editable item details — saves back to the DB any time (not just in Review). */}
       <div className={`card ${styles.details}`}>
         <div className={styles.sectionHeading}>
@@ -629,6 +633,7 @@ export default function ItemDetail() {
         {saveError && <p role="alert" style={{ color: "var(--warn)", fontSize: 13 }}>{saveError} Your edits remain in this form.</p>}
         {deleteError && <p role="alert" style={{ color: 'var(--warn)' }}>{deleteError} <button className="btn" disabled={saving || !recovery.canLeave} onClick={() => void load()}>Reload item before deleting</button></p>}
         <DraftRecovery recovery={recovery} item={item as unknown as DraftItem} disabled={saving} />
+        <MarketplaceLinks key={item.id} itemId={item.id} disabled={saving || photoBusy || !recovery.canLeave} onChanged={load} />
         <fieldset className={styles.fields} disabled={saving || !recovery.ready || recovery.discarding}>
           {/* Free-text (with suggestions) — Nifty allows custom values here. */}
           <Field label="Brand"><VocabInput value={form.brand ?? ""} list={vocab.brand} onChange={setBrand} /></Field>

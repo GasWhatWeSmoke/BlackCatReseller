@@ -20,6 +20,7 @@ export interface PersistSummary {
   aiSkipped: number;
   aiTotal: number;
   aiFirstError?: string;
+  retryableFailures?: number;
 }
 
 async function createItemWithPhotos(item: WorkerItem, batchId: number) {
@@ -173,14 +174,19 @@ async function createItemWithPhotos(item: WorkerItem, batchId: number) {
 export async function persistWorkerResult(
   result: WorkerResult,
   settings: AppSettingsData,
+  receipt?: { jobId: string; revision: number },
 ): Promise<PersistSummary> {
   const archiveDir = path.join(settings.archivePath, result.batchId);
   const needsReviewDir = settings.needsReviewPath;
 
   // Create the Batch row first (FK target for items/problems). Its counters are written at
   // the END from what ACTUALLY landed, so a partial import never leaves overstated numbers.
-  const batch = await prisma.batch.create({
-    data: {
+  const priorReceipt = receipt ? await prisma.intakeReceipt.findUnique({ where: { jobId: receipt.jobId } }) : null;
+  if (priorReceipt && receipt && priorReceipt.revision > receipt.revision) throw new Error("STALE_INTAKE_REVISION");
+  if (priorReceipt?.completed && priorReceipt.revision === receipt?.revision && priorReceipt.summaryJson) {
+    return JSON.parse(priorReceipt.summaryJson) as PersistSummary;
+  }
+  const batchData = {
       finishedAt: new Date(),
       itemsCreated: 0,
       photosProcessed: result.counts.photosProcessed,
@@ -189,14 +195,25 @@ export async function persistWorkerResult(
       collisions: 0,
       durationMs: result.durationMs,
       summaryJson: JSON.stringify(result.counts),
-    },
-  });
+  };
+  const batch = priorReceipt
+    ? await prisma.batch.findUniqueOrThrow({ where: { id: priorReceipt.batchId } })
+    : await prisma.$transaction(async tx => {
+      const created = await tx.batch.create({ data: batchData });
+      if (receipt) await tx.intakeReceipt.create({ data: {
+        jobId: receipt.jobId, batchId: created.id, revision: receipt.revision,
+      } });
+      return created;
+    });
+  if (receipt && priorReceipt) await prisma.intakeReceipt.update({ where: { jobId: receipt.jobId },
+    data: { revision: receipt.revision, completed: false } });
 
   let problemCount = 0;
   const logProblem = async (type: string, sku: string | undefined, message: string, photoPath?: string) => {
-    await prisma.problemLog.create({
-      data: { batchId: batch.id, type, sku, photoPath, message },
-    });
+    const data = { batchId: batch.id, type, sku, photoPath, message };
+    if (!receipt || !await prisma.problemLog.findFirst({ where: { ...data, sku: sku ?? null, photoPath: photoPath ?? null } })) {
+      await prisma.problemLog.create({ data });
+    }
     problemCount++;
   };
 
@@ -209,6 +226,7 @@ export async function persistWorkerResult(
   // §25.2). A persist failure leaves that item's originals in /incoming and continues —
   // the next Process run re-groups and resumes the un-persisted item cleanly.
   let itemsCreated = 0;
+  let retryableFailures = 0;
   // AI outcome tally (items with listing photos only — a photo-less shell can't
   // be identified and shouldn't count as an AI failure).
   let aiFailed = 0;
@@ -217,8 +235,25 @@ export async function persistWorkerResult(
   let duplicatesSkipped = result.counts.duplicatesSkipped;
   let aiFirstError: string | undefined;
   const lateCollisions: WorkerItem[] = [];
+  const resolveCommittedProblems = async (item: WorkerItem) => {
+    if (!receipt) return;
+    await prisma.problemLog.updateMany({ where: { batchId: batch.id, resolved: false,
+      OR: [
+        { type: "IMPORT_FAILED", sku: item.sku },
+        { photoPath: { in: item.originalPaths ?? [] }, type: { in: ["ORDERING_AMBIGUITY", "MARKER_NO_PHOTOS",
+          "AMBIGUOUS_MARKER", "OVERSIZED_GROUP", "UNCERTAIN_MARKER_RANGE", "UNTERMINATED_GROUP", "MERGED_GROUP_SUSPECTED"] } },
+      ] }, data: { resolved: true } });
+  };
   for (const item of result.items) {
-    const existing = await prisma.item.findUnique({ where: { sku: item.sku } });
+    const existing = await prisma.item.findUnique({ where: { sku: item.sku }, include: { photos: true } });
+    if (receipt && existing?.batchId === batch.id && existing.photos.length === item.photos.length &&
+        item.photos.every(photo => existing.photos.some(saved => saved.sha256 === photo.sha256 &&
+          saved.originalFilename === photo.originalFilename))) {
+      // Crash after the atomic item commit: do not recreate inventory or report a collision.
+      await resolveCommittedProblems(item);
+      archiveOriginals(item.originalPaths ?? [], archiveDir, needsReviewDir);
+      continue;
+    }
     if (existing) {
       lateCollisions.push(item);
       continue;
@@ -226,6 +261,7 @@ export async function persistWorkerResult(
     try {
       await createItemWithPhotos(item, batch.id);
       itemsCreated++;
+      await resolveCommittedProblems(item);
       const hasListingPhotos = item.photos.some((p) => p.includeInListing);
       if (hasListingPhotos) {
         aiTotal++;
@@ -242,6 +278,7 @@ export async function persistWorkerResult(
           `committed, but ${a.failed.length} original(s) could not be archived — remove them from /incoming by hand`);
       }
     } catch (e) {
+      retryableFailures++;
       // Originals stay in /incoming → this SKU resumes on the next Process run.
       await logProblem("IMPORT_FAILED", item.sku,
         `persist failed: ${e instanceof Error ? e.message : String(e)} — left in /incoming to retry next Process`);
@@ -255,6 +292,12 @@ export async function persistWorkerResult(
   const allCollisions = [...result.collisions, ...lateCollisions];
   let pendingCollisions = 0;
   for (const col of allCollisions) {
+    if (receipt && await prisma.collision.findFirst({ where: {
+      batchId: batch.id, sku: col.sku, incomingPhotosJson: JSON.stringify(col.photos),
+    } })) {
+      archiveOriginals(col.originalPaths ?? [], archiveDir, needsReviewDir);
+      continue;
+    }
     const existing = await prisma.item.findUnique({
       where: { sku: col.sku },
       include: { photos: { select: { sha256: true } } },
@@ -291,6 +334,7 @@ export async function persistWorkerResult(
       }
       archiveOriginals(col.originalPaths ?? [], archiveDir, needsReviewDir);
     } catch (e) {
+      retryableFailures++;
       await logProblem("IMPORT_FAILED", col.sku,
         `collision persist failed: ${e instanceof Error ? e.message : String(e)} — left in /incoming`);
     }
@@ -309,6 +353,21 @@ export async function persistWorkerResult(
     );
   }
 
+  if (receipt) {
+    const savedItems = await prisma.item.findMany({ where: { batchId: batch.id },
+      select: { photoCount: true, aiError: true } });
+    itemsCreated = savedItems.length;
+    aiTotal = savedItems.filter(item => item.photoCount > 0).length;
+    aiSkipped = savedItems.filter(item => item.photoCount > 0 && isAiSkipped(item.aiError)).length;
+    aiFailed = savedItems.filter(item => item.photoCount > 0 && item.aiError && !isAiSkipped(item.aiError)).length;
+    aiFirstError = savedItems.find(item => item.photoCount > 0 && item.aiError && !isAiSkipped(item.aiError))?.aiError ?? undefined;
+    pendingCollisions = await prisma.collision.count({ where: { batchId: batch.id, status: "pending" } });
+    problemCount = await prisma.problemLog.count({ where: { batchId: batch.id, resolved: false } });
+    const duplicateRows = await prisma.collision.findMany({ where: { batchId: batch.id, resolution: "duplicate-skip" },
+      select: { incomingPhotosJson: true } });
+    duplicatesSkipped = result.counts.duplicatesSkipped + duplicateRows.reduce((sum, row) => sum + JSON.parse(row.incomingPhotosJson).length, 0);
+  }
+
   // Finalize the Batch counters to reflect what actually landed (only collisions that
   // still need a human decision are counted).
   await prisma.batch.update({
@@ -321,7 +380,7 @@ export async function persistWorkerResult(
   // Snapshot the DB after a batch changes inventory (B7) — best-effort, never blocks.
   await backupDatabase(`batch ${batch.id}`);
 
-  return {
+  const summary: PersistSummary = {
     batchId: batch.id,
     itemsCreated,
     duplicatesSkipped,
@@ -332,5 +391,9 @@ export async function persistWorkerResult(
     aiSkipped,
     aiTotal,
     aiFirstError,
+    ...(retryableFailures ? { retryableFailures } : {}),
   };
+  if (receipt) await prisma.intakeReceipt.update({ where: { jobId: receipt.jobId },
+    data: { completed: retryableFailures === 0, summaryJson: JSON.stringify(summary) } });
+  return summary;
 }

@@ -10,7 +10,7 @@ import { usePolledRead } from './usePolledRead';
 
 interface Account {
   marketplace: string; name: string; loggedIn: boolean; loginInProgress: boolean;
-  awaitingConfirmation: boolean; error: string | null;
+  awaitingConfirmation: boolean; error: string | null; policiesLinked?: boolean;
 }
 function postingPreferences(value: any) {
   if(!value||[value.poshmark,value.depop].some(option=>!option||typeof option.enabled!=='boolean'||typeof option.autoPost!=='boolean')
@@ -32,6 +32,7 @@ export function MarketplaceAccounts({workspace}:{workspace:string}) {
   const accountView=usePolledRead(readAccounts,3000);
   const accounts=accountView.data ?? [], error=accountView.error;
   const load=accountView.load;
+  useEffect(()=>{const saved=()=>{void load();};window.addEventListener('blackcat-ebay-policies-saved',saved);return()=>window.removeEventListener('blackcat-ebay-policies-saved',saved);},[load]);
   const [busy, setBusy] = useState(false);
   const commandBusy=useRef(false);
   const [saveError,setSaveError]=useState<string|null>(null);
@@ -126,7 +127,7 @@ export function MarketplaceAccounts({workspace}:{workspace:string}) {
     {accounts.map((account) => <details key={account.marketplace} className="market-account">
       <summary>
       <strong style={{ width: 80 }}>{account.name}</strong>
-      <span className="muted" style={{ fontSize: 13 }}>{["etsy", "ebay", "mercari"].includes(account.marketplace) ? "Uses your selling Chrome account" : account.loginInProgress ? "Finish signing in in Chrome" : account.awaitingConfirmation ? "Waiting for your confirmation" : account.loggedIn ? "Linked" : "Not linked"}</span>
+      <span className="muted" style={{ fontSize: 13 }}>{account.marketplace==='ebay'&&account.policiesLinked===true?'Policies linked · Chrome account':["etsy", "ebay", "mercari"].includes(account.marketplace) ? "Uses your selling Chrome account" : account.loginInProgress ? "Finish signing in in Chrome" : account.awaitingConfirmation ? "Waiting for your confirmation" : account.loggedIn ? "Linked" : "Not linked"}</span>
       </summary><div className="market-account-body">
       {!["etsy", "ebay", "mercari"].includes(account.marketplace) && <button className="btn" style={{ marginLeft: "auto" }} disabled={busy || loginOpen || !accountView.fresh}
         onClick={() => void connect(account)}>
@@ -137,12 +138,12 @@ export function MarketplaceAccounts({workspace}:{workspace:string}) {
       {account.marketplace === "etsy" && <EtsyPostingSettings workspace={workspace} />}
       {account.marketplace === "ebay" && <EbayPostingSettings workspace={workspace} />}
       {account.marketplace === "mercari" && <MercariPostingSettings workspace={workspace} />}
-      {(account.marketplace==='depop'||account.marketplace==='mercari')&&<BrandFallbackSettings marketplace={account.marketplace} workspace={workspace}/>}
+      {account.marketplace==='mercari'&&<BrandFallbackSettings marketplace={account.marketplace} workspace={workspace}/>}
       {account.marketplace === "depop" && depop && <div style={{ width: "100%", display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13 }}>
         <label><input type="checkbox" checked={depop.enabled} disabled={busy || loginOpen} onChange={(event) => void configure("depop", { enabled: event.target.checked })} /> Enable Depop direct posting</label>
         <label><input type="checkbox" checked={!depop.autoPost} disabled={busy || loginOpen} onChange={(event) => void configure("depop", { autoPost: !event.target.checked })} /> Fill check only</label>
         <label><input type="checkbox" checked={depop.boostListings ?? false} disabled={busy || loginOpen} onChange={(event) => void configure("depop", { boostListings: event.target.checked })} /> Boost new Depop listings — 12% fee on qualifying sales</label>
-        <span className="muted">Unisex items use Men. With fill check off, Black Cat publishes while you watch.</span>
+        <span className="muted">Unisex items use Men. Brands missing from Depop automatically use Other or Unknown brand; your item details keep the original brand. With fill check off, Black Cat publishes while you watch.</span>
       </div>}
       {account.marketplace === "poshmark" && poshmark && <div style={{ width: "100%", display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13 }}>
         <label><input type="checkbox" checked={poshmark.enabled} disabled={busy || loginOpen} onChange={(event) => void configure("poshmark", { enabled: event.target.checked })} /> Enable Poshmark direct posting</label>

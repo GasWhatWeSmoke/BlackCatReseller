@@ -286,23 +286,21 @@ async function main(): Promise<void> {
   check("vision API awaits health-backed status for GET and probe",
     (visionRoute.match(/await managedVisionStatus/g) ?? []).length >= 2);
   const preflightIndex = processRoute.indexOf("await managedVisionStatus(true)");
-  const abortBeforeReserveIndex = processRoute.indexOf("if (req.signal.aborted)", preflightIndex);
-  const reserveIndex = processRoute.indexOf("tryReserveIntake()");
-  const abortBeforeSpawnIndex = processRoute.indexOf("if (req.signal.aborted)", reserveIndex);
-  const startIndex = processRoute.indexOf("startIntake(settings");
+  const startIndex = processRoute.indexOf("startIntakeJob(settings");
+  const service = source("src/lib/intakeJobs.ts");
+  const launch = service.slice(service.indexOf("export function startIntakeJob"));
+  const reserveIndex = launch.indexOf("tryReserveIntake()");
   check("AI intake returns typed unavailability before intake mutation",
     processRoute.includes('error: "VISION_UNAVAILABLE"') &&
-      processRoute.includes("kind: visionStatus.kind") &&
-      preflightIndex >= 0 && preflightIndex < reserveIndex && preflightIndex < startIndex);
-  check("an abort during vision preflight cannot reserve or spawn intake",
-    abortBeforeReserveIndex > preflightIndex &&
-      abortBeforeReserveIndex < reserveIndex &&
-      abortBeforeSpawnIndex > reserveIndex &&
-      abortBeforeSpawnIndex < startIndex &&
-      processRoute.slice(abortBeforeSpawnIndex, startIndex).includes("releaseIntakePrep()"));
+      processRoute.includes("kind: status.kind") &&
+      preflightIndex >= 0 && preflightIndex < startIndex);
+  check("the service reserves worker ownership independently of request lifetime",
+    reserveIndex >= 0 && reserveIndex < launch.indexOf("startIntake(settings") &&
+      !processRoute.includes("req.signal") && !launch.includes("req.signal") &&
+      /cancel\(\)\s*\{\s*unsubscribe\(\);\s*\}/.test(processRoute));
   check("intake admits vision before opening its stream",
-    processRoute.indexOf("await intake.admission") >= 0 &&
-    processRoute.indexOf("await intake.admission") < processRoute.indexOf("const stream = new ReadableStream"));
+    processRoute.indexOf("await job.admission") >= 0 &&
+    processRoute.indexOf("await job.admission") < processRoute.indexOf("const stream = new ReadableStream"));
 
   console.log(`\n${failures === 0 ? "ALL LOCAL VISION BOUNDARY CHECKS PASSED" : `LOCAL VISION FAILURES: ${failures}`}`);
   process.exitCode = failures === 0 ? 0 : 1;

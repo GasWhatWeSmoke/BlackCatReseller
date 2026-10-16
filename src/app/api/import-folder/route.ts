@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { getSettings } from "@/lib/settings";
 import { tryReserveIncomingMutation, releaseIncomingMutation } from "@/lib/worker";
+import { acquireIntakeLease } from "@/lib/intakeJobStore";
+import { recordImportedPhoto } from "@/lib/importManifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,8 +34,15 @@ function collectImages(dir: string, depth = 0, acc: string[] = []): string[] {
 export async function POST(req: NextRequest) {
   if (!tryReserveIncomingMutation()) return NextResponse.json({ ok: false, imported: 0,
     code: "INCOMING_BUSY", error: "Another photo import or processing run is active. Wait for it to finish before importing." }, { status: 409 });
-  try { return await importFolder(req); }
-  finally { releaseIncomingMutation(); }
+  let release: (() => void) | undefined;
+  try {
+    release = acquireIntakeLease(await getSettings(), "folder-import");
+    return await importFolder(req);
+  } catch (error) {
+    if (error instanceof Error && error.message === "INTAKE_BUSY") return NextResponse.json({ ok: false, imported: 0,
+      code: "INCOMING_BUSY", error: "Photo processing is active in another application process." }, { status: 409 });
+    throw error;
+  } finally { release?.(); releaseIncomingMutation(); }
 }
 
 async function importFolder(req: NextRequest) {
@@ -82,13 +91,23 @@ async function importFolder(req: NextRequest) {
 
   let imported = 0;
   const failed: string[] = [];
+  const metadataWarnings: string[] = [];
   for (const src of images) {
     const ext = path.extname(src);
     const stem = path.basename(src, ext);
     try {
       for (let suffix = 0; ; suffix++) {
         const dest = path.join(settings.incomingPath, suffix ? `${stem}__${suffix}${ext}` : path.basename(src));
-        try { await fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL); break; }
+        try {
+          await fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL);
+          const saved = fs.openSync(dest, "r+");
+          try { fs.fsyncSync(saved); } finally { fs.closeSync(saved); }
+          try {
+            recordImportedPhoto(settings.dataRoot, { storedPath: dest, originalFilename: path.basename(src),
+              sourcePath: src, sourceRelativePath: path.relative(folderPath, src) });
+          } catch { metadataWarnings.push(path.basename(src)); }
+          break;
+        }
         catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") continue; throw error; }
       }
       imported++;
@@ -106,6 +125,7 @@ async function importFolder(req: NextRequest) {
     found: images.length,
     failed: failed.length,
     failedFiles: failed,
+    metadataWarnings,
     incoming: settings.incomingPath,
     error: imported === 0 ? "No photos could be copied (check folder permissions)." : undefined,
   });

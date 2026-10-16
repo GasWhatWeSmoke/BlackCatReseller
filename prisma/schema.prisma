@@ -292,6 +292,16 @@ model Batch {
   items             Item[]
 }
 
+/// Idempotent intake commit receipt. New table keeps upgrades additive; existing
+/// Batch/Item rows and SKU assignments remain untouched.
+model IntakeReceipt {
+  jobId       String  @id
+  batchId     Int     @unique
+  revision    Int     @default(0)
+  completed   Boolean @default(false)
+  summaryJson String?
+}
+
 /// A flagged issue from a batch (typed; resolvable from the UI).
 model ProblemLog {
   id        Int      @id @default(autoincrement())
