@@ -19,6 +19,26 @@ from black_cat_worker.ocr_engine import OcrLine, extract_lines
 
 
 class CheckpointLockTests(unittest.TestCase):
+    def test_snapshot_flush_uses_writable_destination_and_preserves_read_only_source_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.jpg"
+            target = Path(temporary) / "snapshot.jpg"
+            source.write_bytes(b"unchanged source bytes")
+            source.chmod(0o444)
+            fsync = os.fsync
+            def require_writable(fd):
+                os.write(fd, b"")  # A read-only descriptor fails even for an empty write.
+                return fsync(fd)
+            try:
+                with mock.patch.object(manifest.os, "fsync", side_effect=require_writable):
+                    manifest.copy_fsynced(source, target)
+                self.assertEqual(source.read_bytes(), b"unchanged source bytes")
+                self.assertEqual(target.read_bytes(), source.read_bytes())
+            finally:
+                source.chmod(0o600)
+                if target.exists():
+                    target.chmod(0o600)
+
     def test_transient_replacement_lock_keeps_previous_checkpoint_until_atomic_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "checkpoint.json"

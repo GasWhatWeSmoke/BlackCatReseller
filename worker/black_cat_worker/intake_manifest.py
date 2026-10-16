@@ -75,6 +75,19 @@ def committed_ids(root):
     return {photo_id for group in record.get("groups", []) for photo_id in group.get("photoIds", [])}
 
 
+def copy_fsynced(source, destination):
+    """Flush copied bytes while the destination handle is still writable.
+
+    Windows cannot fsync a read-only handle. Copy metadata only after flushing,
+    so a read-only source never prevents its new snapshot from being flushed.
+    """
+    with open(source, "rb") as reader, open(destination, "xb") as writer:
+        shutil.copyfileobj(reader, writer, length=1024 * 1024)
+        writer.flush()
+        os.fsync(writer.fileno())
+    shutil.copystat(source, destination)
+
+
 def existing_workset(root, incoming=None, cancel_check=lambda: None, recovered=None):
     manifest = read_json(root / "manifest.json") if root else None
     if not manifest:
@@ -104,11 +117,9 @@ def existing_workset(root, incoming=None, cancel_check=lambda: None, recovered=N
             target.parent.mkdir(parents=True,exist_ok=True)
             temp = target.parent / (".restore-" + uuid4().hex + ".tmp")
             try:
-                shutil.copy2(snapshot,temp)
+                copy_fsynced(snapshot,temp)
                 if dedup.sha256_of_file(str(temp),cancel_check=cancel_check) != row["sha256"]:
                     raise RuntimeError("Recovery snapshot changed while copying")
-                with open(temp,"rb") as handle:
-                    os.fsync(handle.fileno())
                 cancel_check()
                 try:
                     os.link(temp,target)
@@ -190,12 +201,10 @@ def freeze(root, photos, hashes, cancel_check):
                 Path(snapshot).parent.mkdir(exist_ok=True)
                 if not os.path.exists(snapshot):
                     temp = snapshot + "." + uuid4().hex + ".tmp"
-                    shutil.copy2(photo.path, temp)
+                    copy_fsynced(photo.path, temp)
                     if dedup.sha256_of_file(temp, cancel_check=cancel_check) != sha:
                         os.unlink(temp)
                         raise RuntimeError("Photo changed while preserving the intake snapshot")
-                    with open(temp, "rb") as handle:
-                        os.fsync(handle.fileno())
                     os.replace(temp, snapshot)
             rows.append({"id": ident, "sequenceIndex": index, "originalFilename": photo.filename,
                          "storedPath": snapshot, "originalPath": photo.path, "sha256": sha,

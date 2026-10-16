@@ -2,7 +2,7 @@
 
 Printed OCR accuracy remains unverified: these use synthetic encoded markers.
 """
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +30,7 @@ class PipelineTests(unittest.TestCase):
         self.incoming=Path(self.settings["incomingPath"]);self.incoming.mkdir()
         self.job=self.root/"intake-jobs"/"job-fixture";self.job.mkdir(parents=True)
         self.db=self.root/"fixture.db"
-        with sqlite3.connect(str(self.db)) as db:
+        with closing(sqlite3.connect(str(self.db))) as db, db:
             db.executescript("CREATE TABLE AppSettings(id INTEGER,data TEXT);CREATE TABLE Item(sku TEXT);CREATE TABLE FileHash(sha256 TEXT);")
             db.execute("INSERT INTO AppSettings VALUES(1,?)",(json.dumps(self.settings),))
         self.env={"BLACKCAT_DB_PATH":str(self.db),"BLACKCAT_DATA_ROOT":str(self.root),
