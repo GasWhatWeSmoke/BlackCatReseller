@@ -25,14 +25,13 @@ jobs:
       PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
       BLACKCAT_TEST_CONCURRENCY: '2'
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.local\playwright
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     steps:
       - name: Set Windows PowerShell module path
         run: |
           $modules = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
           $env:PSModulePath = $modules
           [IO.File]::AppendAllText($env:GITHUB_ENV, "PSModulePath=$modules" + [Environment]::NewLine)
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "TEMP=$env:RUNNER_TEMP" + [Environment]::NewLine + "TMP=$env:RUNNER_TEMP" + [Environment]::NewLine)
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
