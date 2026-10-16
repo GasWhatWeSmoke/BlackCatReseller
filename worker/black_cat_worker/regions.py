@@ -89,21 +89,23 @@ def sticker_context(image, line: OcrLine, lines=()) -> bool:
         bright = gray >= 195
         margin = np.concatenate([bright[0,:], bright[-1,:], bright[:,0], bright[:,-1]])
         light_patch = bool(float(bright.mean()) >= 0.60 and float(margin.mean()) >= 0.75 and int(gray.min()) < 150)
-        if not light_patch:
-            return False
         scale_lines = [other for other in lines if other.classification in {"measurement_scale", "measuring_tool_branding", "tool_identifier"} and other.box]
-        if not any(_near(line, other, factor=12) for other in scale_lines):
+        if light_patch and not any(_near(line, other, factor=12) for other in scale_lines):
             return True
-        # Bright ruler stock is not independent sticker context. Near a scale,
-        # require a separate bounded white component enclosing the candidate
-        # while excluding ALL nearby tool text. If a white label blends into a
-        # white ruler, its separation is unproven and the candidate goes to review.
+        # OCR detection boxes can include extra vertical padding. A real label
+        # may end inside the expanded patch, so localize its actual boundary
+        # instead of requiring that arbitrary patch edge to remain white.
+        # Near a scale, its component must also exclude ALL nearby tool text.
         full_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+        if int(full_gray[y0:y1, x0:x1].min()) >= 150:
+            return False
         _, mask = cv2.threshold(full_gray, 195, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         text_area = max(1, (x1-x0)*(y1-y0))
         for contour in contours:
             x,y,w,label_h = cv2.boundingRect(contour)
+            if x == 0 or y == 0 or x+w >= width or y+label_h >= height:
+                continue  # A frame-filling white surface has no proven label edge.
             if not (x <= x0-h/4 and y <= y0-h/4 and x+w >= x1+h/4 and y+label_h >= y1+h/4):
                 continue
             if not (1.3*text_area <= w*label_h <= 20*text_area) or not (1 <= w/max(1,label_h) <= 12):

@@ -233,6 +233,20 @@ class RegionTests(unittest.TestCase):
         cv2.putText(image,"BC-000042",(250,95),cv2.FONT_HERSHEY_SIMPLEX,.6,(0,0,0),1)
         self.assertTrue(regions.sticker_context(image,marker,scales+[marker]))
 
+    def test_padded_ocr_box_localizes_actual_label_without_weakening_ruler_exclusion(self):
+        import numpy as np
+        import cv2
+        image = np.full((1000, 1400, 3), 42, dtype=np.uint8)
+        image[370:631, 270:1131] = 255
+        cv2.putText(image, "BC-000042", (460, 530), cv2.FONT_HERSHEY_SIMPLEX, 2, (0,0,0), 5)
+        # This is the larger box returned by the actual Windows PaddleOCR run.
+        marker = OcrLine("BC-000042", .9999, (459,450,939,547), "label.jpg")
+        self.assertTrue(regions.sticker_context(image, marker))
+        ruler = OcrLine("32", .99, (500,580,540,610), "label.jpg", "measurement_scale")
+        self.assertFalse(regions.sticker_context(image, marker, [marker, ruler]))
+        blank = image.copy(); blank[450:547,459:939] = 255
+        self.assertFalse(regions.sticker_context(blank, marker))
+
 
 
 class ManifestTests(unittest.TestCase):
