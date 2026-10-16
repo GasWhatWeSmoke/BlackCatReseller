@@ -23,12 +23,11 @@ const playwrightPackage = execFileSync(python, ['-c', 'from pathlib import Path;
 const { _electron } = require(playwrightPackage);
 const environment = { ...process.env, DATABASE_URL: `file:${database.replaceAll('\\', '/')}`, BLACKCAT_DATA_ROOT: media,
   BLACKCAT_RUNTIME_ROOT: path.join(media, 'runtime'), BLACKCAT_VISION_ROOT: path.join(media, 'runtime', 'vision'),
-  USERPROFILE: path.join(root, 'home'), APPDATA: path.join(root, 'appdata'), LOCALAPPDATA: path.join(root, 'localappdata'),
   PYTHONPATH: '', PYTHONHOME: '', NEXT_TELEMETRY_DISABLED: '1' };
 for (const key of ['ELECTRON_RUN_AS_NODE', 'BLACKCAT_PREVIEW', 'BLACKCAT_PREVIEW_PORT', 'BLACKCAT_DEV']) delete environment[key];
-for (const key of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) fs.mkdirSync(environment[key], { recursive: true });
 const proof = { synthetic: true, baselineVersion: '', updatedVersion: '', preservedTables: [], batches: [],
-  cleanOsInstallTest: false, installerExecuted: false, completed: false };
+  cleanOsInstallTest: false, installerExecuted: false, completed: false,
+  ciGraphicsFlags: ['--disable-gpu', '--no-sandbox'], fixtureRoot: root };
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 let desktop;
 function dbRead(callback) { const db = new DatabaseSync(database); try { return callback(db); } finally { db.close(); } }
@@ -40,7 +39,8 @@ async function launch(folder, phase) {
   const metadata = JSON.parse(fs.readFileSync(path.join(folder, 'resources', 'app', 'package.json'), 'utf8'));
   console.log(`${phase}: launching packaged ${metadata.version}`);
   desktop = await _electron.launch({ executablePath: path.join(folder, 'Black Cat Reseller.exe'), cwd: folder,
-    env: environment, timeout: 90000, args: ['--disable-background-networking', '--disable-component-update'] });
+    env: environment, timeout: 90000, args: ['--disable-background-networking', '--disable-component-update',
+      '--disable-gpu', '--no-sandbox', `--user-data-dir=${path.join(root, 'desktop-profile')}`] });
   const page = await desktop.firstWindow({ timeout: 90000 });
   page.setDefaultTimeout(30000);
   await page.waitForURL('http://127.0.0.1:41999/**', { timeout: 90000 });

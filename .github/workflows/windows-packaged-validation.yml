@@ -1,0 +1,84 @@
+name: Validate existing Windows beta artifact
+
+on:
+  push:
+    branches: ['verify/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  packaged:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.local\playwright
+      CANDIDATE_RUN: '38961874545'
+      CANDIDATE_COMMIT: '63bd494d25b28eb22c2c7a537cf7728d8373aa9c'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Install only the QR fixture and browser test tools
+        run: |
+          python -m pip install 'Pillow>=10' 'numpy>=2' 'opencv-python>=4.9' 'pyzbar>=0.1.9' 'qrcode>=7.4' 'playwright>=1.62,<2'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Download and verify the already built candidate
+        run: |
+          gh run download $env:CANDIDATE_RUN --repo $env:GITHUB_REPOSITORY --name "windows-beta-$env:CANDIDATE_COMMIT" --dir .local/candidate
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $built = (Get-ChildItem .local/candidate/dist -Directory -Filter 'release-v*' | Select-Object -First 1).FullName
+          $manifest = Get-Content (Join-Path $built '*release-manifest.json') | ConvertFrom-Json
+          if ($manifest.sourceCommit -ne $env:CANDIDATE_COMMIT -or $manifest.sourceDirty) { throw 'Unexpected candidate source identity' }
+          foreach ($artifact in $manifest.artifacts) {
+            $actual = (Get-FileHash (Join-Path $built $artifact.name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $artifact.sha256) { throw "Candidate checksum mismatch: $($artifact.name)" }
+          }
+          $zip = (Get-ChildItem $built -Filter '*win-x64.zip').FullName
+          7z x $zip '-o.local/candidate/app' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Retrieve the exact beta.8 fixture
+        run: |
+          gh release download v2.0.0-beta.9 --repo $env:GITHUB_REPOSITORY --pattern validation-baseline-beta8.zip --dir .local/beta8
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive .local/beta8/validation-baseline-beta8.zip .local/beta8/kit
+          $installer = (Get-ChildItem .local/beta8/kit -Filter '*Setup.exe').FullName
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '947d3c8fb89527468621005897b0e83881b842691a6bc09e5ce0c46ba96b521e') { throw 'Unexpected beta.8 fixture' }
+          7z x $installer '-o.local/beta8/nsis' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          7z x '.local/beta8/nsis/$PLUGINSDIR/app-64.7z' '-o.local/beta8/app' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Test packaged upgrade and consecutive large batches
+        run: |
+          $env:BLACKCAT_PYTHON = (Get-Command python).Source
+          node scripts/windows-release-smoke.cjs .local/beta8/app .local/candidate/app .local/windows-smoke
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve synthetic validation evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: packaged-validation-${{ github.sha }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: .local/windows-smoke/**
+      - name: Attach verified candidate downloads to the draft
+        run: |
+          $draft = gh release view v2.0.0-beta.9 --repo $env:GITHUB_REPOSITORY --json isDraft --jq .isDraft
+          if ($draft -ne 'true') { throw 'The candidate release must remain a draft' }
+          $built = (Get-ChildItem .local/candidate/dist -Directory -Filter 'release-v*' | Select-Object -First 1).FullName
+          $files = @(Get-ChildItem $built -File | Where-Object { $_.Extension -in '.exe','.zip','.json' -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object { $_.FullName })
+          gh release upload v2.0.0-beta.9 --repo $env:GITHUB_REPOSITORY @files UPDATE-INSTRUCTIONS.txt --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
