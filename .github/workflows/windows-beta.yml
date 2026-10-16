@@ -16,6 +16,9 @@ jobs:
   windows:
     name: Windows ${{ matrix.task }}
     runs-on: windows-2025
+    # GitHub restricts the unpublished beta.8 validation asset to push access.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
