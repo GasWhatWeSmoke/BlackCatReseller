@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { cancelIntake } from "@/lib/worker";
+import { cancelIntakeJob } from "@/lib/intakeJobs";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 // simply shows up as "pending photos" with the one-click resume on the Dashboard.
 export async function POST() {
   try {
-    const cancelled = await cancelIntake();
+    const cancelled = await cancelIntakeJob(await getSettings());
     return NextResponse.json({ ok: true, cancelled });
   } catch {
     return NextResponse.json({ ok: false, error: "CANCEL_REQUEST_FAILED" }, { status: 500 });

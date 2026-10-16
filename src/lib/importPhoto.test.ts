@@ -31,7 +31,7 @@ test("concurrent same-name uploads preserve every complete file and existing ori
   const results = await Promise.all(contents.map(value => writeIncomingPhoto(root, "camera.jpg", Buffer.from(value))));
   assert.equal(new Set(results).size, contents.length);
   for (const [index, destination] of results.entries()) {
-    assert.equal(path.dirname(destination), fs.realpathSync(root));
+    assert.equal(path.dirname(destination), fs.realpathSync.native(root));
     assert.equal(fs.readFileSync(destination, "utf8"), contents[index]);
   }
   assert.equal(fs.readFileSync(path.join(root, "camera.jpg"), "utf8"), "original");

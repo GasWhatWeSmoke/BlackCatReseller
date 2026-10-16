@@ -52,7 +52,9 @@ try {
     ...filesMatching(path.join(root, "scripts"), (name) => /\.test\.(?:[cm]?js|ts)$/.test(name)),
   ].sort();
   if (nodeTests.length === 0) throw new Error("No Node test files were found");
-  run("Node tests", process.execPath, ["--test", ...nodeTests]);
+  const concurrency = process.env.BLACKCAT_TEST_CONCURRENCY;
+  if (concurrency !== undefined && !/^(?:[1-9]|1[0-6])$/.test(concurrency)) throw Error("BLACKCAT_TEST_CONCURRENCY must be 1 through 16");
+  run("Node tests", process.execPath, ["--test", ...(concurrency ? [`--test-concurrency=${concurrency}`] : []), ...nodeTests]);
 
   if (process.platform === "win32") {
     const powershellTests = filesMatching(path.join(root, "scripts"), (name) => name.endsWith(".test.ps1")).sort();

@@ -4,6 +4,8 @@ import "./depth.css";
 import { Nav } from "@/components/Nav";
 import { Toaster } from "sonner";
 import { DropZone } from "@/components/DropZone";
+import { IntakeStatus } from "@/components/IntakeStatus";
+import { DiagnosticRecorder } from "@/components/DiagnosticRecorder";
 import { SoundEffects } from "@/components/SoundEffects";
 import { NativeFixes } from "@/components/NativeFixes";
 import { SurfaceMotion } from "@/components/SurfaceMotion";
@@ -29,6 +31,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </main>
         </div>
         <DropZone />
+        <IntakeStatus />
+        <DiagnosticRecorder />
         <SoundEffects />
         <NativeFixes />
         <SurfaceMotion />

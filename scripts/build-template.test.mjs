@@ -10,6 +10,9 @@ import { assertEmptyTemplate, buildTemplate } from './build-template.mjs';
 
 const SCHEMA = 'datasource db {\n provider = "sqlite"\n url = env("DATABASE_URL")\n}\nmodel Item {\n id Int @id\n name String\n}\nmodel AppSettings {\n id Int @id\n data String\n}\n';
 const SQL = 'CREATE TABLE Item(id INTEGER PRIMARY KEY,name TEXT NOT NULL); CREATE TABLE AppSettings(id INTEGER PRIMARY KEY,data TEXT NOT NULL);';
+const engineName = process.platform === 'win32' ? 'schema-engine-windows.exe'
+  : process.platform === 'darwin' ? `schema-engine-darwin${process.arch === 'arm64' ? '-arm64' : ''}`
+  : 'schema-engine-debian-openssl-3.0.x';
 
 function database(file, sql = SQL) {
   const db = new DatabaseSync(file);
@@ -17,16 +20,16 @@ function database(file, sql = SQL) {
 }
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-template-test-'));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-template-test-')));
   t.after(() => {
-    assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
+    assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir()));
     assert.ok(path.basename(root).startsWith('blackcat-template-test-'));
     fs.rmSync(root, { recursive: true, force: true });
   });
   for (const folder of ['config', 'prisma', 'node_modules/prisma/build', 'node_modules/@prisma/engines']) fs.mkdirSync(path.join(root, folder), { recursive: true });
   fs.writeFileSync(path.join(root, 'prisma/schema.prisma'), SCHEMA);
   fs.writeFileSync(path.join(root, 'node_modules/prisma/build/index.js'), 'inert CLI');
-  fs.writeFileSync(path.join(root, 'node_modules/@prisma/engines', process.platform === 'win32' ? 'schema-engine-windows.exe' : 'schema-engine-debian-openssl-3.0.x'), 'inert engine');
+  fs.writeFileSync(path.join(root, 'node_modules/@prisma/engines', engineName), 'inert engine');
   const template = path.join(root, 'config/template.db'), manifest = path.join(root, 'config/schema-manifest.json');
   database(template);
   fs.writeFileSync(manifest, 'previous manifest');
@@ -68,7 +71,7 @@ test('the installed Prisma CLI builds and compares an owned empty SQLite file', 
   const h = fixture(t);
   const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const cli = path.join(project, 'node_modules/prisma/build/index.js');
-  const engine = path.join(project, 'node_modules/@prisma/engines', process.platform === 'win32' ? 'schema-engine-windows.exe' : 'schema-engine-debian-openssl-3.0.x');
+  const engine = path.join(project, 'node_modules/@prisma/engines', engineName);
   const run = (file, args, options) => spawnSync(file, [cli, ...args.slice(1)], {
     ...options, env: { ...options.env, PRISMA_SCHEMA_ENGINE_BINARY: engine },
   });

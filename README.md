@@ -8,7 +8,7 @@ inventory, crosslisting, and sales on your own computer.
 Created by **Nickolas Verdugo**. Open source under the [MIT License](LICENSE.txt).
 Bug reports, ideas, documentation improvements, and code contributions are welcome.
 
-**Status: Windows beta.** [Download the beta 3 Windows installer](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases/download/v2.0.0-beta.3/BlackCatReseller-v2.0.0-beta.3-Setup.exe).
+**Status: Windows beta.** [Download the beta 9 Windows installer](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases/download/v2.0.0-beta.9/BlackCatReseller-v2.0.0-beta.9-Setup.exe).
 See [all releases and update notes](https://github.com/GasWhatWeSmoke/BlackCatReseller/releases)
 and [system requirements](SYSTEM_REQUIREMENTS.md) before installing.
 

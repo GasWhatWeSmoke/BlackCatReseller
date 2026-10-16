@@ -153,6 +153,7 @@ class RelocationFixture:
             conn.close()
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows filesystem relocation requires native Windows paths")
 class RelocateSqlitePathsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

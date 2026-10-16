@@ -24,13 +24,15 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 import urllib.request
+from urllib.parse import urlsplit
 from typing import List, Optional
 from .work_browser import work_window_bounds, work_window_args, configure_work_page
 
@@ -67,25 +69,84 @@ def _free_port(preferred: int) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(("127.0.0.1", preferred))
-            return preferred
+            return s.getsockname()[1]
         except OSError:
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
 
 def _wait_for_devtools(port: int, timeout: float = 25.0) -> Optional[str]:
-    """Poll Chrome's DevTools endpoint until it answers; return its ws URL base."""
+    """Poll Chrome's local DevTools endpoint and return its exact browser socket."""
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{port}/json/version"
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
-                    json.loads(resp.read().decode("utf-8"))  # sanity
-                    return f"http://127.0.0.1:{port}"
+                    endpoint = json.loads(resp.read().decode("utf-8"))["webSocketDebuggerUrl"]
+                    if _endpoint_port(endpoint) == port:
+                        return endpoint
         except Exception:
             time.sleep(0.4)
     return None
+
+
+def _endpoint_port(endpoint: str) -> int:
+    value = urlsplit(endpoint)
+    if (value.scheme != 'ws' or value.hostname != '127.0.0.1' or value.username or value.password
+            or value.query or value.fragment or not value.port
+            or not re.fullmatch(r'/devtools/browser/[A-Za-z0-9-]+', value.path)):
+        raise ValueError('Invalid dedicated Chrome endpoint')
+    return value.port
+
+
+def _browser_pid(connection) -> int:
+    session = connection.new_browser_cdp_session()
+    try:
+        processes = session.send('SystemInfo.getProcessInfo')['processInfo']
+        ids = [p['id'] for p in processes if p['type'] == 'browser']
+        if len(ids) != 1 or type(ids[0]) is not int or ids[0] <= 0:
+            raise ValueError('Chrome process identity is unavailable')
+        return ids[0]
+    finally:
+        session.detach()
+
+
+def _browser_receipt(profile_dir, chrome, endpoint, pid):
+    _endpoint_port(endpoint)
+    return {'version': 1, 'profile': os.path.normcase(os.path.realpath(profile_dir)),
+            'executable': os.path.normcase(os.path.realpath(chrome)), 'endpoint': endpoint, 'pid': pid}
+
+
+def _saved_browser(profile_dir, chrome):
+    file = Path(profile_dir) / '.blackcat-browser-owner.json'
+    try:
+        if file.stat().st_size > 16384:
+            return None
+        value = json.loads(file.read_text(encoding='utf-8'))
+        if type(value.get('pid')) is not int or value['pid'] <= 0:
+            return None
+        if value != _browser_receipt(profile_dir, chrome, value['endpoint'], value['pid']):
+            return None
+        if _wait_for_devtools(_endpoint_port(value['endpoint']), timeout=1) != value['endpoint']:
+            return None
+        return value
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _close_owned_target(endpoint, target_id):
+    """Bound cleanup to one target and one short-lived helper, never a Chrome PID."""
+    _endpoint_port(endpoint)
+    if not isinstance(target_id, str) or not re.fullmatch(r'[A-Za-z0-9-]+', target_id):
+        raise ValueError('Owned Chrome target identity is unavailable')
+    import playwright
+    node = Path(playwright.__file__).parent / 'driver' / ('node.exe' if os.name == 'nt' else 'node')
+    result = subprocess.run([str(node), str(Path(__file__).with_name('close_owned_target.cjs')),
+        endpoint, target_id], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, timeout=8,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    return result.returncode == 0
 
 
 def manual_login_args(chrome: str, profile_dir: str, start_url: str) -> List[str]:
@@ -153,8 +214,11 @@ def run_manual_login(profile_dir: str, start_url: str, timeout: Optional[float] 
 
 
 class AssistedSession:
-    """An open browser session: .page to drive, .real True when it is the operator's
-    Chrome, .close() to end it. Owns the Chrome process it launched."""
+    """Own one work target in a dedicated profile, preserving other open windows.
+
+    A surviving browser can be reused only with its recorded socket and process
+    identity. Closing the session never closes the browser process or context.
+    """
 
     def __init__(self, pw, profile_dir: str, port_hint: int = 9333, start_url: str = "about:blank", executable_path=None):
         from .browser_lease import BrowserLease, browser_lease_path
@@ -174,11 +238,14 @@ class AssistedSession:
         self._ctx = None
         self.page = None
         self.real = False
+        self._target_id = None
+        self._endpoint = None
 
         chrome = self._executable_path or find_real_chrome()
         bounds = work_window_bounds()
         if chrome:
-            port = _free_port(port_hint)
+            saved = _saved_browser(profile_dir, chrome)
+            port = _free_port(port_hint) if saved is None else _endpoint_port(saved['endpoint'])
             # A NORMAL browser launch: real profile + the standard remote-debugging
             # port. No automation switches, nothing hidden — this is the browser the
             # operator uses, with a debugger attached the way DevTools attaches one.
@@ -189,6 +256,7 @@ class AssistedSession:
                 "--no-first-run",
                 "--no-default-browser-check",
                 '--no-startup-window',
+                '--disable-background-mode',
             ]
             try:
                 startup = {}
@@ -197,18 +265,39 @@ class AssistedSession:
                     info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     info.wShowWindow = 4  # SW_SHOWNOACTIVATE: leave the user's keyboard focus alone.
                     startup['startupinfo'] = info
-                self._proc = subprocess.Popen(args, **startup)
-                base = _wait_for_devtools(port)
+                if saved is None:
+                    self._proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **startup)
+                base = saved['endpoint'] if saved is not None else _wait_for_devtools(port)
                 if not base:
                     raise RuntimeError("Chrome did not expose its DevTools endpoint in time")
                 self._browser = pw.chromium.connect_over_cdp(base)
+                expected_pid = saved['pid'] if saved is not None else self._proc.pid
+                if _browser_pid(self._browser) != expected_pid:
+                    raise RuntimeError('Chrome endpoint belongs to another process')
+                self._endpoint = base
+                receipt = Path(profile_dir) / '.blackcat-browser-owner.json'
+                temporary = receipt.with_suffix('.tmp')
+                temporary.write_text(json.dumps(_browser_receipt(profile_dir, chrome, base, expected_pid)), encoding='utf-8')
+                os.replace(temporary, receipt)
                 self._ctx = self._browser.contexts[0] if self._browser.contexts else self._browser.new_context()
                 cdp = self._browser.new_browser_cdp_session()
                 try:
                     with self._ctx.expect_page() as created:
-                        cdp.send('Target.createTarget', {'url': 'about:blank', 'newWindow': True,
+                        result = cdp.send('Target.createTarget', {'url': 'about:blank', 'newWindow': True,
                                  'background': True, 'focus': False, **bounds})
-                    self.page = created.value
+                        self._target_id = result['targetId']
+                    candidates = [created.value, *self._ctx.pages]
+                    for candidate in candidates:
+                        probe = self._ctx.new_cdp_session(candidate)
+                        try:
+                            if probe.send('Target.getTargetInfo')['targetInfo']['targetId'] == self._target_id:
+                                self.page = candidate
+                                break
+                        finally:
+                            probe.detach()
+                    if self.page is None:
+                        raise RuntimeError('Could not identify the newly created work window')
                 finally:
                     cdp.detach()
                 if bounds:
@@ -230,81 +319,37 @@ class AssistedSession:
         self._open(pw, profile_dir, port_hint, start_url)
 
     def wait_until_closed(self, timeout: float) -> None:
-        """Block until the operator closes the window (real Chrome: its process exits)."""
-        if self._proc is not None:
-            try:
-                self._proc.wait(timeout=timeout)
-            except Exception:
-                pass
-            return
-        # Bundled context: poll the page until it is gone.
+        """Wait for this work page, independently of any other open windows."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
+                if self.page.is_closed():
+                    return
                 self.page.wait_for_timeout(2000)
             except Exception:
                 return
 
-    def _terminate_proc(self) -> None:
-        if self._proc is not None:
-            try:
-                self._proc.terminate()
-                try:
-                    self._proc.wait(timeout=8)
-                except Exception:
-                    self._proc.kill()
-                    self._proc.wait(timeout=8)
-            except Exception:
-                pass
-            self._proc = None
-
     def close(self) -> None:
         try:
-            if self._browser is not None and self._proc is not None:
+            endpoint, target_id = getattr(self, '_endpoint', None), getattr(self, '_target_id', None)
+            if endpoint and target_id:
                 try:
-                    if self._proc.poll() is None:
-                        owned_process = self._proc
-                        def stop_unresponsive_close():
-                            # CDP send itself has no timeout. Only this captured
-                            # Popen handle may be stopped if Chrome cannot reply.
-                            try:
-                                if owned_process.poll() is None:
-                                    _log('[assist] Chrome close command timed out; stopping the owned process')
-                                    owned_process.kill()
-                            except Exception:
-                                pass
-                        watchdog = threading.Timer(8, stop_unresponsive_close)
-                        watchdog.daemon = True
-                        watchdog.start()
-                        cdp = None
-                        try:
-                            cdp = self._browser.new_browser_cdp_session()
-                            cdp.send('Browser.close')
-                        except Exception:
-                            # Chrome may exit before acknowledging the command.
-                            pass
-                        finally:
-                            if cdp is not None:
-                                try: cdp.detach()
-                                except Exception: pass
-                            watchdog.cancel()
-                            watchdog.join(timeout=1)
-                        self._proc.wait(timeout=8)
-                    self._proc = None
+                    if not _close_owned_target(endpoint, target_id):
+                        _log('[assist] Could not confirm the work window closed; other Chrome windows were preserved')
                 except Exception:
-                    _log('[assist] Chrome did not exit normally; stopping the owned process')
-            # CDP browser.close() only disconnects Playwright. Give our Chrome
-            # process a normal exit first so it can flush its dedicated profile.
-            self._terminate_proc()
+                    _log('[assist] Work-window cleanup was unavailable; Chrome was left running')
+            # Disconnect the CDP client. The user may have opened more windows
+            # in this process; neither Browser.close nor process termination is safe.
             if self._browser is not None:
                 self._browser.close()
-            elif self._ctx is not None:
-                self._ctx.close()
         except Exception:
             pass
         self._browser = None
         self._ctx = None
         self.page = None
+        self._proc = None
+        self._target_id = None
+        self._endpoint = None
         lease = getattr(self, '_lease', None)
         if lease is not None:
             lease.release()

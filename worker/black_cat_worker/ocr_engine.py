@@ -23,12 +23,13 @@ from typing import Any, List, Optional, Sequence, Tuple
 # Tried in order; the first shape the installed PaddleOCR accepts wins.
 # paddleocr 3.x dropped the 2.x kwargs (use_angle_cls/show_log).
 # enable_mkldnn=False avoids a OneDNN PIR crash on PP-OCRv5 under Paddle 3.x.
-# The doc-orientation / unwarping / textline-orientation sub-models are three
-# extra passes that dominate CPU time; labels and tags are shot upright.
+# EXIF orientation is applied before inference. Keep text-line orientation
+# enabled for upside-down print; document unwarping remains off because spatial
+# evidence must refer to the image used for region checks.
 _CPU_PINNED_SHAPES: Tuple[dict, ...] = (
     {"device": "cpu", "lang": "en", "enable_mkldnn": False,
      "use_doc_orientation_classify": False, "use_doc_unwarping": False,
-     "use_textline_orientation": False},
+     "use_textline_orientation": True},
     {"device": "cpu", "lang": "en", "enable_mkldnn": False},
     {"device": "cpu", "lang": "en"},
     {"device": "cpu"},
@@ -51,9 +52,10 @@ class OcrLine:
     confidence: Optional[float] = None
     box: Optional[Tuple[int, int, int, int]] = None  # x0, y0, x1, y1
     source: Optional[str] = None  # photo path, when known
+    classification: str = "unknown"
 
     def with_source(self, source: str) -> "OcrLine":
-        return OcrLine(self.text, self.confidence, self.box, source)
+        return OcrLine(self.text, self.confidence, self.box, source, self.classification)
 
 
 def build_engine() -> Any:
@@ -156,13 +158,13 @@ def extract_lines(result: Any) -> List[OcrLine]:
         if rec is not None:
             texts = list(rec) if isinstance(rec, (list, tuple)) else [rec]
             scores = _dictish_get(node, "rec_scores")
-            scores = list(scores) if isinstance(scores, (list, tuple)) else []
+            scores = list(scores) if scores is not None and hasattr(scores, "__iter__") else []
             polys = _dictish_get(node, "rec_polys")
             if polys is None:
                 polys = _dictish_get(node, "rec_boxes")
             if polys is None:
                 polys = _dictish_get(node, "dt_polys")
-            polys = list(polys) if isinstance(polys, (list, tuple)) else []
+            polys = list(polys) if polys is not None and hasattr(polys, "__iter__") else []
             for i, text in enumerate(texts):
                 text = str(text)
                 if not text:

@@ -13,6 +13,7 @@ export function ChromeConnection() {
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const [supported, setSupported] = useState(false);
   const running = useRef(false), generation = useRef(0);
+  const lastConnected = useRef<boolean|null>(null);
   useEffect(() => {
     const native = nativeChrome();
     if (!native?.chromeStatus) return;
@@ -20,7 +21,9 @@ export function ChromeConnection() {
     let disposed = false;
     const refresh = async () => {
       const current = generation.current;
-      try { const value = await native.chromeStatus(); if (!disposed && current === generation.current && !running.current) setStatus(value); }
+      try { const value = await native.chromeStatus(); if (!disposed && current === generation.current && !running.current) {
+        setStatus(value);if(lastConnected.current===false&&value.connected)window.dispatchEvent(new Event('blackcat-chrome-connected'));lastConnected.current=value.connected;
+      } }
       catch { if (!disposed && current === generation.current) setStatus(null); }
     };
     void refresh(); const timer = setInterval(() => void refresh(), 2000);
@@ -50,9 +53,9 @@ export function ChromeConnection() {
     {!supported ? <p>Open the updated Black Cat desktop app to use these controls.</p> : <>
       <p role="status">{label}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <button className="btn btn-primary" disabled={busy || status?.busy || status?.connected || status?.approvalPending}
-          onClick={() => void run(async native => { setStatus(await native.chromeConnect()); })}>Connect Chrome</button>
-        <button className="btn" disabled={busy || !status?.available || status.busy || status.paused}
+        <button className="btn btn-primary" data-diagnostic-action="chrome_connect" disabled={busy || status?.busy || status?.connected || status?.approvalPending}
+          onClick={() => void run(async native => { const result=await native.chromeConnect();setStatus(result);lastConnected.current=result.connected;if(result.connected)window.dispatchEvent(new Event('blackcat-chrome-connected')); })}>Connect Chrome</button>
+        <button className="btn" data-diagnostic-action="chrome_disconnect" disabled={busy || !status?.available || status.busy || status.paused}
           onClick={() => void run(async native => { setStatus(await native.chromeDisconnect()); setMessage('Disconnected. Shared Chrome work stays paused until you reconnect or restart Black Cat. Your Chrome tabs remain open.'); })}>Disconnect Chrome</button>
       </div>
       <p className="muted">Keep Chrome open. If asked, click Allow in Chrome. Finish active browser work before disconnecting; sale checks and removals needing this connection cannot run while it is disconnected.</p>

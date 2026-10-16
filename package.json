@@ -1,6 +1,6 @@
 {
   "name": "black-cat-agent",
-  "version": "2.0.0-beta.3",
+  "version": "2.0.0-beta.9",
   "private": true,
   "description": "Local-first clothing-resale inventory & photo-intake desktop app (Electron + Next.js + Python worker)",
   "author": "Black Cat",
@@ -36,7 +36,7 @@
     "@prisma/client": "^6.19.2",
     "clsx": "^2.1.1",
     "lucide-react": "^0.532.0",
-    "next": "15.5.25",
+    "next": "15.5.28",
     "react": "19.1.5",
     "react-dom": "19.1.5",
     "sharp": "^0.35.4",

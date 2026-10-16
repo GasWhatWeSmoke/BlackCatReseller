@@ -1,0 +1,134 @@
+name: Build and verify Windows beta
+
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.task }}
+    runs-on: windows-2025
+    # GitHub restricts the unpublished beta.8 validation asset to push access.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [tests, package]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      CHECKPOINT_DISABLE: '1'
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
+      BLACKCAT_TEST_CONCURRENCY: '2'
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.local\playwright
+    steps:
+      - name: Set Windows PowerShell module path
+        run: |
+          $modules = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
+          $env:PSModulePath = $modules
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "PSModulePath=$modules" + [Environment]::NewLine)
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "TEMP=$env:RUNNER_TEMP" + [Environment]::NewLine + "TMP=$env:RUNNER_TEMP" + [Environment]::NewLine)
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install application dependencies
+        run: npm.cmd ci
+      - name: Prepare database template and Python worker
+        run: |
+          npm.cmd run db:template
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm.cmd run prisma:generate
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm.cmd run worker:setup
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run required Windows tests
+        if: matrix.task == 'tests'
+        run: |
+          Get-CimInstance Win32_Process -Filter "ProcessId=$PID" | Out-Null
+          npm.cmd test
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Check actual printed sticker OCR
+        if: matrix.task == 'package'
+        run: |
+          & worker/.venv/Scripts/python.exe scripts/verify-printed-sku.py --output .local/windows-smoke/printed-ocr
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build verified Windows installer
+        if: matrix.task == 'package'
+        run: npm.cmd run release
+      - name: Retrieve beta.8 upgrade fixture
+        if: matrix.task == 'package'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force .local/beta8 | Out-Null
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release download "v$version" --repo $env:GITHUB_REPOSITORY --pattern validation-baseline-beta8.zip --dir .local/beta8
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive .local/beta8/validation-baseline-beta8.zip .local/beta8/kit
+          $installer = (Get-ChildItem .local/beta8/kit -Filter '*Setup.exe').FullName
+          if (-not $installer) { throw 'Missing beta.8 baseline installer' }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '947d3c8fb89527468621005897b0e83881b842691a6bc09e5ce0c46ba96b521e') { throw 'Unexpected beta.8 fixture hash' }
+          7z x $installer '-o.local/beta8/nsis' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          7z x '.local/beta8/nsis/$PLUGINSDIR/app-64.7z' '-o.local/beta8/app' -y | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify packaged startup, upgrade and photo intake
+        if: matrix.task == 'package'
+        run: |
+          $updated = (Get-ChildItem dist -Directory -Filter 'release-v*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          $env:BLACKCAT_PYTHON = Join-Path $pwd 'worker/.venv/Scripts/python.exe'
+          node scripts/windows-release-smoke.cjs .local/beta8/app "$updated/win-unpacked" .local/windows-smoke
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Upload installer, checksums and validation evidence
+        if: always() && matrix.task == 'package'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-beta-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            dist/release-v*/*.exe
+            dist/release-v*/*.zip
+            dist/release-v*/*.json
+            dist/release-v*/SHA256SUMS.txt
+            .local/windows-smoke/**
+
+  prepare-downloads:
+    name: Attach verified downloads
+    needs: windows
+    runs-on: windows-2025
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Attach verified downloads to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $draft = gh release view "v$version" --repo $env:GITHUB_REPOSITORY --json isDraft --jq .isDraft
+          if ($LASTEXITCODE -or $draft -ne 'true') { throw 'Only a draft release may receive candidate artifacts' }
+          gh run download $env:GITHUB_RUN_ID --repo $env:GITHUB_REPOSITORY --name "windows-beta-$env:GITHUB_SHA" --dir .local/draft-download
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $built = (Get-ChildItem .local/draft-download/dist -Directory -Filter 'release-v*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          $files = @(Get-ChildItem $built -File | Where-Object { $_.Extension -in '.exe','.zip','.json' -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object { $_.FullName })
+          gh release upload "v$version" --repo $env:GITHUB_REPOSITORY @files UPDATE-INSTRUCTIONS.txt --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

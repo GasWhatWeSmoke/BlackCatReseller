@@ -628,8 +628,7 @@ class ManagedVisionEnricher:
                 # The model saw the same ruler the OCR did: a bare number it calls a
                 # model or style number that only the ruler photo carried is the ruler's.
                 crossed = props.cross_check(parsed, tag_reading, fields)
-                if "size" in crossed and "size" in ai_fields:
-                    ai_fields.remove("size")
+                ai_fields = [key for key in ai_fields if key not in crossed]
                 if crossed:
                     parsed["propsScrubbed"] = sorted(
                         set(parsed.get("propsScrubbed") or []) | set(crossed))

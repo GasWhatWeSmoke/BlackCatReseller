@@ -4,7 +4,7 @@ import math
 import re
 from decimal import Decimal, InvalidOperation
 from .work_browser import keep_work_page_ready
-from .choice_scope import opened_choices
+from .choice_scope import opened_choices, _check_scope
 from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
@@ -20,6 +20,18 @@ CONDITIONS = {
 
 
 def norm(value): return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
+def selector_literal(value):
+    # Playwright serializes regex names into /.../ selectors; Python's
+    # re.escape leaves that JavaScript delimiter unescaped.
+    return re.escape(str(value)).replace('/', r'\/')
+
+
+def country_aliases(value):
+    if norm(value) in {'us', 'usa', 'unitedstates', 'unitedstatesofamerica'}:
+        return ['United States', 'United States of America', 'USA', 'US', 'U.S.A.', 'U.S.']
+    return []
 
 
 def reviewed_inseam(item, category):
@@ -183,7 +195,7 @@ def find_control(page, names):
         named = visible(page.locator('button[name=' + json.dumps('attributes.' + name) + ']'))
         if len(named) == 1: return named[0]
         if len(named) > 1: raise ValueError(f"eBay has multiple visible {name} controls")
-        matches = visible(page.get_by_label(re.compile(r"^" + re.escape(name) + r"(?:\s*\*|\s*\(required\))?$", re.I)))
+        matches = visible(page.get_by_label(re.compile(r"^" + selector_literal(name) + r"(?:\s*\*|\s*\(required\))?$", re.I)))
         if len(matches) == 1: return matches[0]
         if len(matches) > 1: raise ValueError(f"eBay has multiple visible {name} controls")
         # Essential specifics use a tooltip label referenced by aria-describedby,
@@ -206,10 +218,10 @@ def click_choice(scope, labels, timeout=10000, trigger=None):
         if trigger is not None and trigger.get_attribute('aria-expanded') == 'false':
             trigger.click()
         for label in labels:
-            pattern = re.compile('^' + re.escape(label).replace(r'\-', '[-–—]') + '$', re.I)
+            pattern = re.compile('^' + selector_literal(label).replace(r'\-', '[-–—]') + '$', re.I)
             for locator in [scope.get_by_role('option', name=pattern), scope.get_by_role('radio', name=pattern), scope.get_by_role('menuitemradio', name=pattern), scope.get_by_role('menuitemcheckbox', name=pattern), scope.get_by_role('button', name=pattern),
                             scope.get_by_role('link', name=pattern), scope.get_by_text(pattern)]:
-                matches = visible(locator)
+                matches = [match for match in visible(locator) if match.is_enabled()]
                 if len(matches) == 1:
                     matches[0].click(); return label
                 if len(matches) > 1: raise ValueError(f"eBay choice is ambiguous: {label}")
@@ -223,27 +235,69 @@ def set_field(page, names, value, aliases=(), group=None):
         try:
             return _set_field_once(page, names, value, aliases, group)
         except (BrowserTimeout, AssertionError, ValueError) as error:
+            department_changed = names == ['Department'] and str(error).startswith('eBay does not offer the reviewed choice: ')
             if isinstance(error, ValueError) and not (
                     str(error) == f'eBay did not retain {names[0]}'
-                    or str(error).startswith('eBay choice is ambiguous: ')):
+                    or str(error).startswith('eBay choice is ambiguous: ') or department_changed):
                 raise
             # eBay can replace an item-specific menu while photo suggestions
             # arrive. Reopen only that dropdown and still require one exact
             # reviewed choice; never redo uploads or publishing.
             field = control(page, names)
             if attempt == 2 or field.evaluate('e=>e.tagName') in {'INPUT', 'TEXTAREA', 'SELECT'}:
+                if department_changed:
+                    raise ValueError(f'eBay Department does not offer the reviewed choice: {value}. Review the category and department before retrying.') from None
                 raise
             field.press('Escape')
             page.wait_for_timeout(500)
+
+
+def set_department(page, item):
+    from playwright.sync_api import expect
+    value = listing_department(item)
+    aliases = {'Men': ["Men's", 'Mens', 'Men’s'], 'Women': ["Women's", 'Womens', 'Women’s'],
+               'Unisex Adults': ['Unisex']}.get(value, [])
+    try:
+        selected = set_field(page, ['Department'], value, aliases)
+    except ValueError as error:
+        # Keep diagnostics limited to this public item-specific control, never a page dump.
+        details = {}
+        try:
+            field = control(page, ['Department'], required=False)
+            if field is not None:
+                details['displayed'] = field_value(field, ['Department'])[:120]
+                if field.evaluate('e=>e.tagName') == 'SELECT':
+                    choices = field.locator('option')
+                else:
+                    menu_id = field.get_attribute('aria-controls')
+                    if not menu_id or len(menu_id.split()) != 1:
+                        raise ValueError('No separately identified department menu')
+                    menu = page.locator('[id=' + json.dumps(menu_id) + ']')
+                    if menu.count() != 1:
+                        raise ValueError('Department menu is no longer available')
+                    _check_scope(menu, field, 'eBay Department diagnostics')
+                    choices = menu.locator('[role="option"],[role="menuitemradio"],[role="radio"]')
+                details['choices'] = [text.strip()[:80] for text in choices.all_text_contents()[:20]]
+        except Exception:
+            pass
+        raise ValueError(f'{error} Department details: {json.dumps(details)}') from None
+    field = control(page, ['Department'])
+    if field.get_attribute('aria-expanded') == 'true':
+        field.press('Escape')
+        expect(field).not_to_have_attribute('aria-expanded', 'true')
+    return selected
 
 
 def _set_field_once(page, names, value, aliases=(), group=None):
     from playwright.sync_api import expect
     field = control(page, names)
     choices = [str(value), *aliases]
+    country = country_aliases(value) if any(name in {'Country/Region of Manufacture', 'Country of Origin'} for name in names) else []
+    choices = list(dict.fromkeys([*choices, *country]))
+    search_terms = list(dict.fromkeys([country[0], str(value), 'US', 'U.S.'])) if country else [str(value)]
     tag = field.evaluate('e=>e.tagName')
     if field.locator('button[aria-pressed]').count():
-        pattern = re.compile('^(?:' + '|'.join(re.escape(choice) for choice in choices) + ')$', re.I)
+        pattern = re.compile('^(?:' + '|'.join(selector_literal(choice) for choice in choices) + ')$', re.I)
         selected = field.get_by_role('button', name=pattern)
         expect(selected).to_have_count(1)
         if selected.get_attribute('aria-pressed') != 'true': selected.click()
@@ -251,7 +305,7 @@ def _set_field_once(page, names, value, aliases=(), group=None):
         expect(field.locator('button[aria-pressed="true"]')).to_have_count(1)
         return selected.inner_text().strip()
     if field.get_by_role('radio').count():
-        pattern = re.compile('^(?:' + '|'.join(re.escape(choice) for choice in choices) + ')$', re.I)
+        pattern = re.compile('^(?:' + '|'.join(selector_literal(choice) for choice in choices) + ')$', re.I)
         selected = field.get_by_role('radio', name=pattern)
         expect(selected).to_have_count(1)
         selected.check()
@@ -273,14 +327,34 @@ def _set_field_once(page, names, value, aliases=(), group=None):
         return matches[0]['text']
     if tag in {'INPUT', 'TEXTAREA'}:
         if field.get_attribute('role') == 'combobox' or field.get_attribute('aria-autocomplete') == 'list':
-            scope, _dialog = opened_choices(page, field, lambda: field.fill(str(value)), f'eBay {names[0]}')
-            option = scope.get_by_role('option', name=re.compile('^(?:' + '|'.join(re.escape(x) for x in choices) + ')$', re.I))
-            expect(option).to_have_count(1, timeout=15000)
-            option.click()
+            for index, query in enumerate(search_terms):
+                label = f'eBay {names[0]}'
+                try:
+                    scope, _dialog = opened_choices(page, field, lambda: field.fill(query), label)
+                except ValueError as error:
+                    # A no-result country search may hide its owned popup.
+                    # Retry an explicit alias only when that exact separate
+                    # container still exists; ambiguous or unscoped menus stop.
+                    if country and index + 1 < len(search_terms) and str(error) == f'{label} choice container could not be verified':
+                        controlled = (field.get_attribute('aria-controls') or '').split()
+                        if len(controlled) == 1:
+                            owned = page.locator('[id=' + json.dumps(controlled[0]) + ']')
+                            if owned.count() == 1 and not owned.is_visible():
+                                _check_scope(owned, field, label)
+                                continue
+                    raise
+                option = scope.get_by_role('option', name=re.compile('^(?:' + '|'.join(selector_literal(x) for x in choices) + ')$', re.I), disabled=False)
+                try:
+                    expect(option).to_have_count(1, timeout=15000)
+                except AssertionError:
+                    if index + 1 < len(search_terms) and option.count() == 0: continue
+                    raise
+                option.click()
+                break
         else:
             field.fill(str(value))
         field.press('Tab')
-        expect(field).to_have_value(re.compile('^(?:' + '|'.join(re.escape(x) for x in choices) + ')$', re.I))
+        expect(field).to_have_value(re.compile('^(?:' + '|'.join(selector_literal(x) for x in choices) + ')$', re.I))
         return field.input_value()
     native_menu = field.locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," fake-menu-button ")][1]').locator(':scope > .fake-menu-button__menu')
     # Photo suggestions can rebuild item specifics and replace generated IDs.
@@ -300,13 +374,22 @@ def _set_field_once(page, names, value, aliases=(), group=None):
             label = choice.inner_text().strip()
             choice.click()
             expect(scope.get_by_role('menuitemcheckbox', name=label, exact=True)).not_to_be_checked()
-    if len(search) == 1 and not group: search[0].fill(str(value))
+    # An abbreviation search such as USA can hide the native United States
+    # option; some native menus also require a nonempty search to show choices.
     if group:
-        details = scope.locator('details').filter(has=page.locator('summary').filter(has_text=re.compile('^' + re.escape(group) + '$')))
+        details = scope.locator('details').filter(has=page.locator('summary').filter(has_text=re.compile('^' + selector_literal(group) + '$')))
         expect(details).to_have_count(1, timeout=15000)
         if details.get_attribute('open') is None: details.locator('summary').click()
         scope = details
-    selected = click_choice(scope, choices, trigger=field if field.get_attribute('aria-controls') or native_menu.count() == 1 else None)
+    searches = search_terms if len(search) == 1 and not group else [None]
+    for index, query in enumerate(searches):
+        if query is not None: search[0].fill(query)
+        try:
+            selected = click_choice(scope, choices, trigger=field if field.get_attribute('aria-controls') or native_menu.count() == 1 else None)
+            break
+        except ValueError as error:
+            if index + 1 < len(searches) and str(error).startswith('eBay does not offer the reviewed choice: '): continue
+            raise ValueError(f'{error} (field: {names[0]})') from None
     if dialog is not None:
         done = dialog.get_by_role('button', name='Done', exact=True)
         if len(visible(done)) == 1: done.click()
@@ -342,12 +425,22 @@ def field_value(field, names):
 
 def section(page, name):
     names=[name,'Item category'] if name.lower()=='category' else [name]
-    heading = page.get_by_role('heading', name=re.compile('^(?:' + '|'.join(re.escape(value) for value in names) + ')$', re.I))
+    heading = page.get_by_role('heading', name=re.compile('^(?:' + '|'.join(selector_literal(value) for value in names) + ')$', re.I))
     if len(visible(heading)) == 1:
         for xpath in ['xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," smry ")][1]', 'xpath=ancestor::section[1]', 'xpath=ancestor::*[@role="region"][1]', 'xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," section ")][1]']:
             found = heading.locator(xpath)
             if found.count() == 1: return found
     raise ValueError(f"eBay section not found: {name}")
+
+
+def choose_category_path(dialog, path, stage):
+    for index, part in enumerate(path):
+        try:
+            click_choice(dialog, [part])
+        except ValueError:
+            # Only the fixed category mapping is reported, never page contents.
+            raise ValueError(f'eBay category selection failed during {stage} at step {index + 1}/{len(path)}: {part}. '
+                             f'Expected path: {" > ".join(path)}. Review the item type and category before retrying.') from None
 
 
 def prelisting_category(page, item):
@@ -369,8 +462,7 @@ def prelisting_category(page, item):
     if suggested:
         suggested[0].click()
     else:
-        for part in path:
-            click_choice(dialog, [part])
+        choose_category_path(dialog, path, 'prelisting')
     if dialog.is_visible():
         click_choice(dialog, ['Done'])
     expect(dialog).not_to_be_visible()
@@ -464,7 +556,7 @@ def fill_category(page, item):
             raise ValueError('eBay selected category breadcrumbs are ambiguous')
         click_choice(breadcrumbs[0] if breadcrumbs else dialog,[path[0]])
         expect(selected).not_to_be_visible(timeout=10000)
-    for part in path: click_choice(dialog, [part])
+    choose_category_path(dialog, path, 'listing editor')
     for label in ['Done', 'Save', 'Apply']:
         button = dialog.get_by_role('button', name=label, exact=True)
         if len(visible(button)) == 1:
@@ -509,22 +601,43 @@ def fixed_price(page):
     expect(auction).not_to_be_checked()
 
 
+def policy_key(value):
+    # Listing counts are display annotations, not part of the saved policy name.
+    name = re.sub(r'\s*[\[(]\d+\s+listings?[\])]$', '', str(value or '').strip(), flags=re.I)
+    return re.sub(r'\s+', ' ', name).casefold()
+
+
 def fill_policy(page, labels, desired=None, required=True):
     from playwright.sync_api import expect
     field = control(page, labels, required=required)
     if field is None: return None
+    def chosen(value):
+        return bool(norm(value)) and not re.fullmatch(r'(?:select|choose)(?:a|an)?(?:shipping|return|payment)?policy|select|choose|none', norm(value))
+    if field.evaluate('e=>e.tagName') == 'SELECT':
+        value = field_value(field, labels).strip()
+        if not desired and chosen(value): return value
+        options = field.locator('option').evaluate_all('els=>els.map(e=>({text:e.textContent.trim(),value:e.value,disabled:e.disabled}))')
+        available = [option for option in options if not option['disabled'] and option['value'] and chosen(option['text'])]
+        if desired: available = [option for option in available if policy_key(option['text']) == policy_key(desired)]
+        if len(available) != 1: raise ValueError(f'Choose an existing eBay {labels[0].lower()} in Settings')
+        field.select_option(available[0]['value']); expect(field).to_have_value(available[0]['value'])
+        return available[0]['text']
     if field.get_attribute('role') == 'combobox':
-        if not desired and field.input_value().strip(): return field.input_value()
+        if not desired and chosen(field.input_value()): return field.input_value()
         field.click()
         popup_id = field.get_attribute('aria-controls')
         if not popup_id: raise ValueError(f'eBay {labels[0]} options could not be identified')
         popup = page.locator('[id=' + json.dumps(popup_id) + ']')
         expect(popup).to_be_visible()
-        candidates = visible(popup.get_by_role('option'))
+        candidates = [choice for choice in visible(popup.get_by_role('option'))
+                      if choice.is_enabled() and choice.get_attribute('aria-disabled') != 'true']
         # A blank policy can use the sole existing account policy. Multiple
         # policies require an explicit configured name; never select by order.
         if desired:
-            candidates = [choice for choice in candidates if norm(re.sub(r'\s*[\[(]\d+ listings?[\])]$', '', choice.inner_text().strip())) == norm(desired)]
+            candidates = [choice for choice in candidates if policy_key(choice.inner_text()) == policy_key(desired)]
+        else:
+            selected = [choice for choice in candidates if choice.get_attribute('aria-selected') == 'true']
+            if len(selected) == 1: candidates = selected
         if len(candidates) != 1: raise ValueError(f'Choose an existing eBay {labels[0].lower()} in Settings')
         candidates[0].click()
         value = field.input_value().strip()
@@ -532,7 +645,8 @@ def fill_policy(page, labels, desired=None, required=True):
         return value
     if desired: set_field(page, labels, desired)
     value = field_value(field, labels).strip()
-    if not value or norm(value) in {'select','selectpolicy','none','chooseapolicy'}: raise ValueError(f'Choose an existing eBay {labels[0].lower()}')
+    if desired and policy_key(value) != policy_key(desired): raise ValueError(f'eBay {labels[0]} was not retained')
+    if not chosen(value): raise ValueError(f'Choose an existing eBay {labels[0].lower()}')
     return value
 
 
@@ -629,8 +743,7 @@ def fill_listing_fields(page, item, options):
         expand_specifics(page)
     selected = {'Brand': set_field(page, ['Brand'], item['brand'])}
     if not accessory or control(page, ['Department'], required=False):
-        department = listing_department(item)
-        selected['Department'] = set_field(page, ['Department'], department, ['Unisex'] if department == 'Unisex Adults' else [])
+        selected['Department'] = set_department(page, item)
     size, size_type = size_and_type(item, category)
     if (not accessory and not size) or not item.get('color'): raise ValueError("eBay requires reviewed size and color")
     has_size = control(page, ['Size', 'US Shoe Size'], required=not accessory)
@@ -739,7 +852,7 @@ def verify_listing_fields(page, item, filled):
     if norm(field_value(control(page, ['Condition']), ['Condition'])) != norm(filled['condition']): raise ValueError('eBay condition changed before publication')
     for label, value in filled['policies'].items():
         with policy_settings(page, label):
-            if field_value(control(page, [label]), [label]) != value: raise ValueError(f'eBay {label} changed before publication')
+            if policy_key(field_value(control(page, [label]), [label])) != policy_key(value): raise ValueError(f'eBay {label} changed before publication')
     format_field = control(page, ['Format', 'Listing format'], required=False)
     if format_field:
         if norm(field_value(format_field, ['Format', 'Listing format'])) not in {'fixedprice', 'buyitnow'}: raise ValueError('eBay format changed before publication')

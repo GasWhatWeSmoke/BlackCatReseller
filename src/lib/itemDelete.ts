@@ -44,10 +44,11 @@ export async function deleteItem(id: number, opts: Options = {}): Promise<ItemDe
         return { ok: false as const, sku: item.sku, code: "PUBLISH_IN_PROGRESS" as const,
           error: "Cancel this item's pending publishing work before deleting it." };
       const live = item.marketplaceListings.find(row => !["ended", "sold", "not_published"].includes(row.status));
-      const legacy = item.status !== "Sold" && (["Uploading", "Draft", "Published"].includes(item.niftyStatus) || ["Listed", "Uploaded to Nifty"].includes(item.status));
+      const legacy = item.status !== "Sold" && (["Uploading", "Draft", "Published"].includes(item.niftyStatus)
+        || item.status === "Uploaded to Nifty" || item.status === "Listed" && item.marketplaceListings.length === 0);
       if (live || legacy)
         return { ok: false as const, sku: item.sku, code: "LIVE_LISTINGS" as const,
-          error: "This item has a live or unresolved marketplace listing. Resolve or remove that listing before deleting its inventory record." };
+          error: "This item has a live or unresolved marketplace listing. Open the item's Marketplace links to record a listing you already removed, then reload before deleting." };
       if (expected && item.updatedAt.toISOString() !== expected.updatedAt) return changed;
 
       const files = [...new Set(item.photos.flatMap(photo => [photo.storedPath, photo.thumbPath]).filter((file): file is string => !!file))];

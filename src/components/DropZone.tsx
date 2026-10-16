@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { intakeStage, pollIntakeProgress, type IntakeProgress } from "@/lib/intake";
 import { intakeFeedback, type IntakeSummary } from "@/lib/intakeOutcome";
+import { importPhotos } from "@/lib/importLifecycle";
 
 // NDJSON reader for POST /api/process — streams live stage progress to `onProgress` and
 // returns the final summary (or throws). This is what makes a drag-drop a REAL intake
@@ -85,6 +86,7 @@ async function readProcessStream(
       if (!line) continue;
       try {
         const ev = JSON.parse(line);
+        if (ev.type === "job") continue;
         if (ev.type === "done") {
           terminalCount += 1;
           summary = ev.summary as ProcessSummary;
@@ -100,7 +102,7 @@ async function readProcessStream(
           err = String(ev.error);
           errReason = ev.reason ? String(ev.reason) : null;
         }
-        else if (ev.type === "progress") {
+        else if (ev.type === "progress" || ev.type === "persisting") {
           const p = intakeStage(ev);
           if (p) onProgress?.(p);
         }
@@ -158,11 +160,11 @@ export function DropZone() {
         return;
       }
       const fd = new FormData();
-      for (const f of files) fd.append("files", f);
+      for (const f of files) { fd.append("files", f, f.name); fd.append("sourceRelativePaths", f.webkitRelativePath || f.name); }
       const t = toast.loading(`Importing ${files.length} file(s)…`);
       let imported = 0;
       try {
-        const res = await fetch("/api/import", { method: "POST", body: fd });
+        const res = await importPhotos("/api/import", { method: "POST", body: fd });
         const j = await res.json();
         imported = j.imported ?? 0;
         if (!res.ok || !imported) {
@@ -266,39 +268,7 @@ export function DropZone() {
   return (
     <>
       {over && <div className="drop-overlay">{pathname === "/" ? "Drop photos to import & group into items" : "Add photos on the Dashboard"}</div>}
-      {/* Global processing pill: visible on ANY page while a dropped batch is grouping,
-          so a long AI pass never looks like a hang again. */}
-      {prog && (
-        <div style={{
-          position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 18, zIndex: 60,
-          width: 400, maxWidth: "calc(100vw - 40px)", background: "var(--panel)",
-          border: "1px solid var(--border)", borderRadius: 12, padding: "12px 16px",
-          boxShadow: "0 8px 28px rgba(0,0,0,0.65)",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: prog.pct != null ? 8 : 0 }}>
-            <span style={{
-              width: 12, height: 12, border: "2px solid var(--accent)", borderTopColor: "transparent",
-              borderRadius: "50%", display: "inline-block", animation: "dz-spin 0.9s linear infinite",
-            }} />
-            <span>{prog.label}</span>
-            {prog.sub && <span className="muted">{prog.sub}</span>}
-            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-              {prog.pct != null && <span className="muted" style={{ fontSize: 11 }}>{Math.round(prog.pct)}%</span>}
-              <button className="btn" onClick={cancelRun} disabled={cancelling} data-sound="none"
-                style={{ padding: "2px 8px", fontSize: 12 }}
-                title="Stop reading this batch — nothing is saved; the photos stay pending on the Dashboard">
-                {cancelling ? "Cancelling…" : "Cancel"}
-              </button>
-            </span>
-          </div>
-          {prog.pct != null && (
-            <div style={{ height: 6, borderRadius: 999, background: "var(--panel-2)", overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 999, background: "var(--accent)", width: `${Math.min(100, prog.pct)}%`, transition: "width .4s ease" }} />
-            </div>
-          )}
-          <style>{`@keyframes dz-spin{to{transform:rotate(360deg)}}`}</style>
-        </div>
-      )}
+
     </>
   );
 }

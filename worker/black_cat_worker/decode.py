@@ -1,21 +1,17 @@
-"""Per-photo decode cascade: QR (OpenCV -> pyzbar) -> OCR (PaddleOCR PP-OCRv5).
+"""Read localized strict BC-###### END-marker evidence from QR or printed text.
 
-A photo is a marker iff a decode yields a value that normalizes/corrects to a
-valid SKU.  All heavy deps are imported lazily and degrade gracefully, so the
-pipeline still runs (markers just won't be found) if a dep is missing — and the
-pure-logic tests need none of them.
-
-Engine rationale (benchmark-checked): traditional OCR ~= VLM accuracy on clean
-printed labels but far faster/lighter/deterministic; the allowlist + format
-correction (sku.coerce_to_sku) is the real accuracy lever.  A vision-LLM
-escalation is Version B.
+Printed OCR runs independently of QR detection. Exact syntax, OCR recognition
+confidence and physical light-label context are separate checks. Conflicting,
+partial and ambiguous candidates remain review evidence; no digits are guessed.
+Originals are retained; EXIF orientation is applied to the analysis image only.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
+import re
 
-from . import ocr_engine
+from . import ocr_engine, regions
 from . import sku as sku_mod
 
 
@@ -29,6 +25,8 @@ class DecodeOutcome:
     # with glare/blur" — the grouper uses it as an item-boundary signal so a
     # dead sticker can't silently merge two items.
     qr_pattern_detected: bool = False
+    review_reason: Optional[str] = None
+    evidence: list = field(default_factory=list)
 
 
 class Decoder:
@@ -40,11 +38,8 @@ class Decoder:
         self.length = int(settings.get("skuLength", 6))
         self.ocr_enabled = bool(settings.get("ocrEnabled", True))
         self.ocr_preprocess = bool(settings.get("ocrPreprocess", True))
-        # Smart gate: only OCR a photo when a QR-LIKE PATTERN was detected but not decoded
-        # (i.e. it's a sticker shot with a damaged/glare QR). Garment photos have no QR at
-        # all, and running CPU OCR on every one of them cost ~14s/photo — it turned a
-        # seconds-long decode pass into many minutes. `false` reverts to OCR-everything.
-        self.ocr_smart_gate = bool(settings.get("ocrSmartGate", True))
+        # Historical ocrSmartGate settings are deliberately ignored: a printed
+        # text sticker need not contain any QR pattern.
         self._cv2 = None
         self._qr = None
         self._pyzbar = None
@@ -106,52 +101,54 @@ class Decoder:
 
     # ---- public API -------------------------------------------------------
     def decode(self, path: str) -> DecodeOutcome:
-        raw_seen: Optional[str] = None
-        # Load + downscale ONCE (iPhone shots are ~4000px); reuse for QR + OCR.
         work = self._load_work_image(path)
-
-        # 1) QR via OpenCV (single + multi).
+        qr_candidates = []
         if work is not None and self._qr is not None:
-            for val in self._opencv_qr(work):
-                raw_seen = raw_seen or val
-                normalized = sku_mod.normalize(val, self.prefixes, self.length)
-                if normalized:
-                    return DecodeOutcome(normalized, val, "qr-opencv", True)
-
-        # 2) QR via pyzbar.
+            qr_candidates.extend((val, "qr-opencv") for val in self._opencv_qr(work))
         if work is not None and self._ensure_pyzbar():
             try:
-                for res in self._pyzbar.decode(work):
-                    val = res.data.decode("utf-8", "ignore")
-                    raw_seen = raw_seen or val
-                    normalized = sku_mod.normalize(val, self.prefixes, self.length)
-                    if normalized:
-                        return DecodeOutcome(normalized, val, "qr-pyzbar", True)
+                qr_candidates.extend((res.data.decode("utf-8", "ignore"), "qr-pyzbar") for res in self._pyzbar.decode(work))
             except Exception:
                 pass
-
-        # QR didn't decode — check whether a QR-like pattern is at least PRESENT.
-        # Cheap (~ms). Feeds both the OCR smart gate and the grouper's boundary
-        # safeguard (an unreadable sticker still ends its item).
-        pattern = self._qr_pattern_present(work) if work is not None and self._qr is not None else False
-
-        # 3) OCR fallback (allowlist + format correction). No thresholding — it
-        # destroyed real glossy/angled labels; the raw downscaled image reads best.
-        # Smart-gated: only worth paying CPU OCR when this LOOKS like a sticker shot
-        # (a QR pattern is present but wouldn't decode). If cv2 is unavailable we can't
-        # detect, so fall back to the old OCR-everything behavior.
-        run_ocr = self.ocr_enabled
-        if run_ocr and self.ocr_smart_gate and work is not None and self._qr is not None:
-            run_ocr = pattern
-        if run_ocr and self._ensure_paddle():
-            for text in self._ocr_texts(work if work is not None else path):
-                corrected = sku_mod.coerce_to_sku(text, self.prefixes, self.length)
-                if corrected:
-                    return DecodeOutcome(corrected, text, "ocr", pattern)
-                if raw_seen is None and any(ch.isalnum() for ch in text):
-                    raw_seen = text
-
-        return DecodeOutcome(None, raw_seen, None, pattern)
+        pattern = bool(qr_candidates) or (self._qr_pattern_present(work) if work is not None and self._qr is not None else False)
+        accepted = {}
+        evidence = []
+        review = None
+        for raw, method in qr_candidates:
+            value = sku_mod.normalize(raw)
+            if value:
+                accepted[value] = (raw, method)
+                evidence.append({"raw": raw, "normalized": value, "classification": "inventory_sticker", "method": method, "status": "verified"})
+            elif re.match(r"^\s*BC\s*[-‐‑–—]", raw, re.I):
+                review = "encoded inventory candidate has invalid or incomplete SKU syntax"
+                evidence.append({"raw": raw,"normalized":None,"classification":"inventory_candidate","method":method,"status":"review"})
+        # Printed stickers are supported independently of the presence of a QR.
+        # Run one OCR pass even when a QR decoded, to catch conflicting labels.
+        if self.ocr_enabled and self._ensure_paddle():
+            lines = regions.classify([line.with_source(path) for line in ocr_engine.read_lines(work if work is not None else path, self._paddle)])
+            for line in lines:
+                value = sku_mod.normalize(line.text)
+                candidate_like = value is not None or re.match(r"^\s*BC\s*[-‐‑–—]", line.text, re.I)
+                if not candidate_like:
+                    continue
+                physical = regions.sticker_context(work, line, lines)
+                score_ok = line.confidence is not None and line.confidence >= 0.90
+                supported = bool(value and physical and score_ok)
+                row = {"raw": line.text, "normalized": value, "classification": "inventory_sticker" if supported else "inventory_candidate",
+                       "box": list(line.box) if line.box else None, "coordinateSpace": "analysis_image",
+                       "imageSize": [int(work.shape[1]), int(work.shape[0])] if hasattr(work, "shape") else None, "recognitionScore": line.confidence,
+                       "method": "ocr", "status": "verified" if supported else "review", "lightLabelContext": physical}
+                evidence.append(row)
+                if supported:
+                    accepted[value] = (line.text, "ocr")
+                elif value not in accepted:
+                    review = "printed inventory candidate needs a clear localized sticker read"
+        if len(accepted) > 1:
+            return DecodeOutcome(None, " | ".join(accepted), None, pattern, "multiple conflicting SKU candidates", evidence)
+        if len(accepted) == 1 and review is None:
+            value, (raw, method) = next(iter(accepted.items()))
+            return DecodeOutcome(value, raw, method, pattern, None, evidence)
+        return DecodeOutcome(None, evidence[0]["raw"] if evidence else None, None, pattern, review, evidence)
 
     def _qr_pattern_present(self, img) -> bool:
         """True if OpenCV can LOCALIZE a QR-like pattern (finder squares) in the image,
@@ -171,11 +168,17 @@ class Decoder:
             pass
         return False
 
-    def _load_work_image(self, path: str, max_side: int = 1800):
+    def _load_work_image(self, path: str, max_side: int = 3000):
         """Read and downscale to max_side (keeps QR + label text legible, fast)."""
         if not self._ensure_cv2():
             return None
-        img = self._cv2.imread(path)
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(path) as original:
+                oriented = ImageOps.exif_transpose(original).convert("RGB")
+                img = self._cv2.cvtColor(self._np.asarray(oriented), self._cv2.COLOR_RGB2BGR)
+        except Exception:
+            img = self._cv2.imread(path)
         if img is None:
             return None
         longest = max(img.shape[0], img.shape[1])

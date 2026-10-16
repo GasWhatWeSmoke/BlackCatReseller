@@ -89,3 +89,12 @@ test("only the five requested marketplace identifiers can reach login routes", (
   for (const name of BROWSER_MARKETPLACES) assert.equal(isBrowserMarketplace(name), true);
   for (const name of ["../depop", "EBAY", "amazon", "", "https://example.test"]) assert.equal(isBrowserMarketplace(name), false);
 });
+
+test("a saved complete eBay policy catalog restores beta8's linked-policy account status", t => {
+  const { settings } = fixture(t);
+  settings.publish = { ebayPolicyCatalog: { complete: true, readAt: '2026-10-11T12:00:00.000Z', policies: [] } };
+  const status = browserAccountStatus(settings, 'ebay');
+  assert.equal(status.policiesLinked, true); assert.equal(status.loggedIn, true);
+  assert.equal(status.refreshedAt, '2026-10-11T12:00:00.000Z');
+  assert.equal(browserAccountStatus(settings, 'depop').policiesLinked, false);
+});

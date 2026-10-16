@@ -167,9 +167,14 @@ check("cancel writes a token before waiting for close",
   cancelBody.indexOf("requestIntakeCancellation(reg)") >= 0 &&
   cancelBody.indexOf("requestIntakeCancellation(reg)") < cancelBody.indexOf("await reg.closed"));
 check("cancel path contains no force kill", !/taskkill|SIGKILL|\.kill\s*\(/i.test(cancelBody));
-check("HTTP acknowledgement awaits natural close",
-  cancelRoute.indexOf("await cancelIntake()") >= 0 &&
-  cancelRoute.indexOf("await cancelIntake()") < cancelRoute.indexOf("NextResponse.json"));
+const intakeService = fs.readFileSync(path.join(ROOT, "src/lib/intakeJobs.ts"), "utf8");
+const serviceCancel = intakeService.slice(intakeService.indexOf("export async function cancelIntakeJob"), intakeService.indexOf("export function startIntakeJob"));
+check("HTTP acknowledgement awaits the service-owned worker terminal",
+  cancelRoute.indexOf("await cancelIntakeJob(await getSettings())") >= 0 &&
+  cancelRoute.indexOf("await cancelIntakeJob(await getSettings())") < cancelRoute.indexOf("NextResponse.json") &&
+  serviceCancel.indexOf("live.intake?.cancel()") >= 0 &&
+  serviceCancel.indexOf("live.intake?.cancel()") < serviceCancel.indexOf("await live.terminal") &&
+  serviceCancel.indexOf("await live.terminal") < serviceCancel.indexOf('return live.job.state === "cancelled"'));
 check("cancel write failure is a typed 500", /CANCEL_REQUEST_FAILED/.test(cancelRoute) && /status:\s*500/.test(cancelRoute));
 
 console.log("\n== bounded IPC and reenrich input ==");

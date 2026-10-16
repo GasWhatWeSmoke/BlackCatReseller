@@ -6,6 +6,11 @@ import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { reviewRemoval, validRemovalReview, type RemovalReview } from './removalRecovery.ts';
 import { beginDelistAttempt, finishDelistAttempt, removalBacklog } from './saleProtection.ts';
+import { deleteItem } from '../itemDelete.ts';
+import { itemDeleteExpectation } from '../itemDeleteSelection.ts';
+import { scanAutoRunCandidates } from './autoRunScan.ts';
+import { createQueuedRun } from './createQueuedRun.ts';
+import type { AppSettingsData } from '../types.ts';
 
 async function fixture(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blackcat-removal-review-'));
@@ -16,11 +21,13 @@ async function fixture(t: TestContext) {
   const listing = await db.marketplaceListing.create({ data: { itemId: item.id, marketplace: 'depop', status: 'delist_failed',
     externalListingId: 'seller-belt', externalUrl: 'https://www.depop.com/products/seller-belt/', attemptCount: 4, lastError: 'Missing Edit link' } });
   const snapshot = async (): Promise<RemovalReview> => {
-    const row = (await removalBacklog(db)).find(row => row.id === listing.id)!;
+    const row = await db.marketplaceListing.findUniqueOrThrow({ where: { id: listing.id }, include: { item: true } });
     return { ...row, externalUrl: row.externalUrl!, externalListingId: row.externalListingId!, sku: row.item.sku,
       updatedAt: row.updatedAt.toISOString(), itemUpdatedAt: row.item.updatedAt.toISOString() };
   };
-  return { db, item, listing, snapshot };
+  const settings = { processingPath: path.join(dir, 'processing'), readyPath: path.join(dir, 'ready'),
+    needsReviewPath: path.join(dir, 'review'), archivePath: path.join(dir, 'archive'), incomingPath: path.join(dir, 'incoming') };
+  return { db, item, listing, snapshot, deleteOptions: { store: db, settings } };
 }
 
 test('owner-confirmed removal clears the backlog atomically with honest provenance and unchanged item history', async t => {
@@ -83,4 +90,67 @@ test('audit failure rolls back the status update and cannot silently clear a rem
   await assert.rejects(reviewRemoval(failing as any, { action: 'confirm_manual_removal', confirmed: true, listing: await snapshot() }), /audit unavailable/);
   assert.deepEqual(await db.marketplaceListing.findUnique({ where: { id: listing.id } }), listing);
   assert.equal(await db.problemLog.count(), 0);
+});
+
+for (const status of ['Ready', 'Ready for Nifty', 'Listed']) {
+  test(`external withdrawal of an unsold ${status} item prevents reposting and permits a fresh deletion`, async t => {
+    const { db, item, listing, snapshot, deleteOptions } = await fixture(t);
+    const before = await db.item.update({ where: { id: item.id }, data: { status, salePrice: null, platformSold: null, updatedAt: new Date(0) } });
+    await db.marketplaceListing.update({ where: { id: listing.id }, data: { status: 'published' } });
+    assert.equal((await deleteItem(item.id, deleteOptions)).code, 'LIVE_LISTINGS');
+    await reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: await snapshot() });
+    const after = await db.item.findUniqueOrThrow({ where: { id: item.id } });
+    assert.equal(after.status, 'Removed'); assert.equal(after.salePrice, null); assert.equal(after.itemCost, before.itemCost);
+    const scan = await scanAutoRunCandidates(db, {} as AppSettingsData, ['depop'], () => { throw Error('Withdrawn item must never reach an adapter'); });
+    assert.equal(scan.batch, null); assert.equal(scan.coverage.total, 0);
+    assert.equal((await createQueuedRun(db, [item.id], ['depop'])).ok, false);
+    assert.equal((await deleteItem(item.id, { ...deleteOptions, expected: itemDeleteExpectation(before) })).code, 'ITEM_CHANGED');
+    assert.equal((await deleteItem(item.id, { ...deleteOptions, expected: itemDeleteExpectation(after) })).ok, true);
+    assert.equal(await db.item.count({ where: { id: item.id } }), 0);
+    assert.equal(await db.problemLog.count({ where: { type: 'MANUAL_LISTING_REMOVAL_CONFIRMED' } }), 1);
+  });
+}
+
+test('other live marketplaces remain protected and stale confirmations cannot resolve them', async t => {
+  const { db, item, snapshot, deleteOptions } = await fixture(t);
+  await db.item.update({ where: { id: item.id }, data: { status: 'Ready', salePrice: null, platformSold: null, updatedAt: new Date(0) } });
+  const other = await db.marketplaceListing.create({ data: { itemId: item.id, marketplace: 'ebay', status: 'published',
+    externalListingId: '123456789012', externalUrl: 'https://www.ebay.com/itm/123456789012' } });
+  const first = await snapshot();
+  const second: RemovalReview = { ...other, sku: item.sku, externalListingId: other.externalListingId!, externalUrl: other.externalUrl!,
+    updatedAt: other.updatedAt.toISOString(), itemUpdatedAt: first.itemUpdatedAt };
+  await reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: first });
+  assert.equal((await db.item.findUniqueOrThrow({ where: { id: item.id } })).status, 'Needs Info');
+  assert.equal((await deleteItem(item.id, { ...deleteOptions, force: true })).code, 'LIVE_LISTINGS');
+  await assert.rejects(reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: second }), /changed/);
+  const current = await db.item.findUniqueOrThrow({ where: { id: item.id } });
+  await reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: { ...second, itemUpdatedAt: current.updatedAt.toISOString() } });
+  assert.equal((await db.item.findUniqueOrThrow({ where: { id: item.id } })).status, 'Needs Info');
+  assert.equal((await deleteItem(item.id, deleteOptions)).ok, true);
+});
+
+test('unsold withdrawal blocks active jobs and retains legacy Nifty protection', async t => {
+  const { db, item, listing, snapshot, deleteOptions } = await fixture(t);
+  await db.item.update({ where: { id: item.id }, data: { status: 'Ready', salePrice: null, platformSold: null, niftyStatus: 'Published' } });
+  await assert.rejects(reviewRemoval(db, { action: 'retry_removal', confirmed: true, listing: await snapshot() }), /changed/);
+  const run = await db.publishRun.create({ data: { marketplacesJson: '["depop"]' } });
+  const job = await db.publishJob.create({ data: { runId: run.id, itemId: item.id, marketplace: 'depop' } });
+  for (const status of ['queued', 'publishing', 'retrying']) {
+    await db.publishJob.update({ where: { id: job.id }, data: { status } });
+    await assert.rejects(reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: await snapshot() }), /active publishing/);
+    assert.equal((await db.marketplaceListing.findUniqueOrThrow({ where: { id: listing.id } })).status, 'delist_failed');
+  }
+  await db.publishJob.update({ where: { id: job.id }, data: { status: 'cancelled' } });
+  await reviewRemoval(db, { action: 'confirm_manual_removal', confirmed: true, listing: await snapshot() });
+  assert.equal((await db.item.findUniqueOrThrow({ where: { id: item.id } })).status, 'Needs Info');
+  assert.equal((await deleteItem(item.id, deleteOptions)).code, 'LIVE_LISTINGS');
+});
+
+test('unsold withdrawal and repost suppression roll back together when the audit cannot be written', async t => {
+  const { db, item, listing, snapshot } = await fixture(t);
+  const before = await db.item.update({ where: { id: item.id }, data: { status: 'Ready', salePrice: null, platformSold: null } });
+  const failing = { $transaction: (fn: any) => db.$transaction(tx => fn({ ...tx, problemLog: { create: async () => { throw Error('audit unavailable'); } } })) };
+  await assert.rejects(reviewRemoval(failing as any, { action: 'confirm_manual_removal', confirmed: true, listing: await snapshot() }), /audit unavailable/);
+  assert.deepEqual(await db.item.findUnique({ where: { id: item.id } }), before);
+  assert.deepEqual(await db.marketplaceListing.findUnique({ where: { id: listing.id } }), listing);
 });

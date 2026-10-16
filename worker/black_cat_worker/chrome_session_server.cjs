@@ -29,7 +29,7 @@ function sessionHandlers({ tokenPath, ownerPid, sockets, getSession, createSessi
         paused: isPaused(),
         failed: session?.failed ?? false, busy: !!session?.active, cleanupSlow: session?.cleanupSlow ?? false,
         windowError: session?.windowError ?? null,
-        capabilities: ['new-editor-v1', 'ebay-editor-v1', 'seller-tools-v1', 'mercari-tools-v1', 'work-window-v1', 'background-link-v1'] }));
+        capabilities: ['new-editor-v1', 'ebay-editor-v1', 'seller-tools-v1', 'mercari-tools-v1', 'work-window-v1', 'background-link-v1', 'ebay-policies-v1'] }));
     },
     upgrade(request, socket, head) {
       try {

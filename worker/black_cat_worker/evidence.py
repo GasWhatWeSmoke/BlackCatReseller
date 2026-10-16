@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import normalize
+from . import normalize, tag_ocr
 
 VERIFIED = "verified"
 INFERRED = "inferred"
@@ -231,6 +231,26 @@ def build_evidence(parsed: Dict, fields: Dict, reading: Any = None) -> Tuple[Dic
             elif record:
                 record["note"] = f"{record.get('note', '')} did you mean {suggestion}?".strip()
 
+    if has_ocr:
+        for name, record in evidence.items():
+            raw = record.get("rawOcr")
+            if raw:
+                support = [line for line in getattr(reading, "lines", []) if str(getattr(line, "text", "")).strip().casefold() == str(raw).strip().casefold()
+                           or (name == "size" and str(raw) in tag_ocr.extract_size_candidates([str(getattr(line,"text", "")).upper()]))]
+                record["sourceEvidence"] = [{"photo":line.source,"box":list(line.box) if line.box else None,
+                                             "text":line.text,"classification":line.classification,
+                                             "recognitionScore":line.confidence} for line in support[:4]]
+                if name in {"brand", "size"} and record.get("status") == VERIFIED:
+                    appropriate = "garment_tagged_size" if name == "size" else "garment_brand_label"
+                    if not any(line.classification == appropriate for line in support):
+                        record["status"] = UNCERTAIN
+                        record["note"] = "OCR text agrees, but garment-label context needs confirmation"
+            if name in {"brand", "size"}:
+                candidates = list(getattr(reading, "brand_candidates" if name == "brand" else "size_candidates", []) or [])
+                if len(set(candidates)) > 1:
+                    record["status"] = UNCERTAIN
+                    record["alternatives"] = candidates[:5]
+                    record["note"] = "multiple OCR candidates require garment-label review"
     return evidence, derived
 
 

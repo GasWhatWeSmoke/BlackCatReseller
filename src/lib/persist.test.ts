@@ -32,7 +32,8 @@ async function fixture(t: TestContext) {
   vm.compileFunction(source, ["exports", "require"], { filename: "persist.ts" })(exports, (name: string) => {
     assert.ok(name in dependencies, `Unexpected persistence dependency ${name}`); return dependencies[name];
   });
-  const persist = exports.persistWorkerResult as (result: WorkerResult, settings: AppSettingsData) => Promise<PersistSummary>;
+  const persist = exports.persistWorkerResult as (result: WorkerResult, settings: AppSettingsData,
+    receipt?: { jobId: string; revision: number }) => Promise<PersistSummary>;
   let receipt = 0;
   async function run(items: WorkerItem[] = [], collisions: WorkerItem[] = [], duplicates = 0) {
     const result = { batchId: `fixture-${++receipt}`, items, collisions, duplicates: [], needsReview: [], problems: [], durationMs: 1,
@@ -55,8 +56,47 @@ async function fixture(t: TestContext) {
       photos: hashes.map((sha256, index) => ({ originalFilename: `${sku}-${index}.jpg`, storedPath: path.join(root, `${sku}-${index}.jpg`),
         thumbPath: null, sha256, sortOrder: index, isCover: index === 0, isMarker: false, includeInListing: true, rotation: 0 })) } as WorkerItem;
   }
-  return { db, root, run, item };
+  const durable = (items: WorkerItem[], jobId: string, revision = 0) => persist({ batchId: "durable-fixture", items,
+    collisions: [], duplicates: [], needsReview: [], problems: [], durationMs: 1,
+    counts: { itemsCreated: items.length, photosProcessed: items.reduce((n, item) => n + item.photos.length, 0),
+      duplicatesSkipped: 0, problems: 0, collisions: 0 } }, settings, { jobId, revision });
+  return { db, root, run, item, durable };
 }
+
+test("durable repeated delivery and corrected revision reuse one batch without duplicate items", async t => {
+  const f = await fixture(t);
+  const first = f.item("BC-000042");
+  const a = await f.durable([first], "job-one");
+  const b = await f.durable([first], "job-one");
+  assert.deepEqual(b, JSON.parse(JSON.stringify(a)));
+  assert.equal(await f.db.batch.count(), 1);
+  assert.equal(await f.db.item.count(), 1);
+  assert.equal(await f.db.collision.count(), 0);
+  const corrected = await f.durable([f.item("BC-000043")], "job-one", 1);
+  assert.equal(corrected.itemsCreated, 2);
+  assert.equal(corrected.batchId, a.batchId);
+  await assert.rejects(f.durable([first], "job-one", 0), /STALE_INTAKE_REVISION/);
+  assert.equal(await f.db.item.count(), 2);
+});
+
+test("durable partial commit retains successful items and retries only failed inventory transactions", async t => {
+  const f = await fixture(t);
+  await f.db.$executeRawUnsafe("CREATE TRIGGER fail_second BEFORE INSERT ON Item WHEN NEW.sku='BC-000043' BEGIN SELECT RAISE(ABORT,'injected crash'); END");
+  const items = [f.item("BC-000042"), f.item("BC-000043")];
+  const partial = await f.durable(items, "job-partial");
+  assert.equal(partial.itemsCreated, 1);
+  assert.equal(partial.retryableFailures, 1);
+  assert.equal((await f.db.intakeReceipt.findUniqueOrThrow({ where: { jobId: "job-partial" } })).completed, false);
+  assert.equal(fs.existsSync(items[0].originalPaths![0]), false);
+  assert.equal(fs.existsSync(items[1].originalPaths![0]), true);
+  await f.db.$executeRawUnsafe("DROP TRIGGER fail_second");
+  const recovered = await f.durable(items, "job-partial");
+  assert.equal(recovered.itemsCreated, 2);
+  assert.equal(recovered.retryableFailures, undefined);
+  assert.equal(await f.db.batch.count(), 1);
+  assert.equal(await f.db.collision.count(), 0);
+  assert.equal(await f.db.photo.count(), 2);
+});
 
 test("100 no-AI items retain their reason and originals without false problem rows", async t => {
   const f = await fixture(t);

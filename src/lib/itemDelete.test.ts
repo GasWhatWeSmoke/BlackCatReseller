@@ -130,6 +130,14 @@ test("legacy unresolved publication remains protected without blocking an ordina
   assert.equal((await deleteItem(source.id, opts)).ok, true);
 });
 
+test('a Listed item requires legacy resolution only when it has no direct marketplace history', async t => {
+  const { db, source, opts } = await fixture(t);
+  await db.item.update({ where: { id: source.id }, data: { status: 'Listed' } });
+  assert.equal((await deleteItem(source.id, opts)).code, 'LIVE_LISTINGS');
+  await db.marketplaceListing.create({ data: { itemId: source.id, marketplace: 'depop', status: 'ended' } });
+  assert.equal((await deleteItem(source.id, opts)).ok, true);
+});
+
 test("cleanup preserves a configured working root even when nested inside another working root", async t => {
   const { db, source, opts } = await fixture(t);
   const nested = path.join(opts.settings.processingPath, "ready"); fs.mkdirSync(nested);

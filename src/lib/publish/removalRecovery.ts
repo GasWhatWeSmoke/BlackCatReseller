@@ -27,9 +27,10 @@ export async function reviewRemoval(db: Pick<PrismaClient, '$transaction'>, inpu
   if (!input || !['retry_removal', 'confirm_manual_removal'].includes(input.action) || input.confirmed !== true || !validRemovalReview(input.listing))
     throw new RemovalReviewError('Confirm the exact item and marketplace listing before resolving its removal.');
   const expected = input.listing;
+  const manual = input.action === 'confirm_manual_removal';
   return db.$transaction(async tx => {
     const row = await tx.marketplaceListing.findUnique({ where: { id: expected.id }, include: { item: true } });
-    if (!row || row.item.status !== 'Sold' || row.itemId !== expected.itemId || row.item.sku !== expected.sku ||
+    if (!row || (!manual && row.item.status !== 'Sold') || row.itemId !== expected.itemId || row.item.sku !== expected.sku ||
       row.item.updatedAt.toISOString() !== expected.itemUpdatedAt || row.updatedAt.toISOString() !== expected.updatedAt ||
       row.marketplace !== expected.marketplace || row.status !== expected.status || row.attemptCount !== expected.attemptCount ||
       row.externalListingId !== expected.externalListingId || row.externalUrl !== expected.externalUrl || !reviewable.includes(row.status))
@@ -38,7 +39,6 @@ export async function reviewRemoval(db: Pick<PrismaClient, '$transaction'>, inpu
       throw new RemovalReviewError('Only a reviewed failed removal can receive a new retry.');
     if (await tx.publishJob.count({ where: { itemId: row.itemId, status: { in: ['queued', 'publishing', 'retrying'] } } }))
       throw new RemovalReviewError('This item has an active publishing job. Finish or cancel it before resolving removal.');
-    const manual = input.action === 'confirm_manual_removal';
     const note = manual
       ? 'Owner confirmed this exact listing was manually removed or made unavailable. No automated removal verification is claimed.'
       : 'Owner reviewed the failure and requested another guarded removal pass. Availability must be verified by the worker.';
@@ -47,6 +47,17 @@ export async function reviewRemoval(db: Pick<PrismaClient, '$transaction'>, inpu
       data: manual ? { status: 'ended', endedAt: now, lastError: null }
         : { status: 'delist_pending', endedAt: null, attemptCount: 0, lastAttemptAt: null, lastError: null } });
     if (changed.count !== 1) throw new RemovalReviewError('The listing changed before saving. Refresh before another action.');
+    // An external withdrawal is also a decision to stop automatic posting.
+    // Keep other unresolved marketplaces visible without altering sale history.
+    if (manual && ['Ready', 'Ready for Nifty', 'Listed'].includes(row.item.status)) {
+      const remaining = await tx.marketplaceListing.count({ where: {
+        itemId: row.itemId, status: { notIn: ['ended', 'sold', 'not_published'] },
+      } });
+      const legacy = ['Uploading', 'Draft', 'Published'].includes(row.item.niftyStatus) || row.item.status === 'Uploaded to Nifty';
+      const changedItem = await tx.item.updateMany({ where: { id: row.itemId, updatedAt: row.item.updatedAt },
+        data: { status: remaining || legacy ? 'Needs Info' : 'Removed' } });
+      if (changedItem.count !== 1) throw new RemovalReviewError('The item changed before saving. Refresh before another action.');
+    }
     await tx.problemLog.create({ data: { type: manual ? 'MANUAL_LISTING_REMOVAL_CONFIRMED' : 'LISTING_REMOVAL_RETRY_REVIEWED',
       sku: row.item.sku, resolved: true, message: JSON.stringify({ note, listingId: row.id, marketplace: row.marketplace,
         externalListingId: row.externalListingId, externalUrl: row.externalUrl, previousStatus: row.status,

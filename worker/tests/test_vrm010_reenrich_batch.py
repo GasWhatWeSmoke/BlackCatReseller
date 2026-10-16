@@ -32,7 +32,7 @@ def item(request_id="one", sku="000001"):
         "sku": sku,
         "photos": [{
             "photoId": int(sku) + 1,
-            "storedPath": f"C:/{sku}.jpg",
+            "storedPath": str(pathlib.Path(tempfile.gettempdir(), f"{sku}.jpg").resolve()),
             "isMarker": False,
             "sha256": "a" * 64,
         }],
@@ -46,11 +46,11 @@ class ReenrichBatchTests(unittest.TestCase):
         self.tag_reader = reader.start()
         self.addCleanup(reader.stop)
 
-    def test_enabled_tag_reading_reaches_enrichment_without_marker_photos(self):
+    def test_enabled_tag_reading_includes_marker_photo_garment_evidence(self):
         reading = object()
         self.tag_reader.return_value = reading
         spec = item()
-        spec["photos"].append({**spec["photos"][0], "photoId": 99, "storedPath": "C:/marker.jpg", "isMarker": True})
+        spec["photos"].append({**spec["photos"][0], "photoId": 99, "storedPath": str(pathlib.Path(tempfile.gettempdir(), "marker.jpg").resolve()), "isMarker": True})
         calls = []
         cancel = lambda: None
         @contextlib.contextmanager
@@ -64,7 +64,7 @@ class ReenrichBatchTests(unittest.TestCase):
         settings = {"visionEnabled": True, "tagOcrEnabled": True, "tagOcrMaxPhotos": 4}
         with mock.patch.object(batch, "_verify_photo_identities"):
             batch.run_batch([spec], settings=settings, cancel_check=cancel, session_factory=session, enricher_factory=Enricher)
-        self.tag_reader.assert_called_once_with([spec["photos"][0]["storedPath"]], settings, cancel_check=cancel)
+        self.tag_reader.assert_called_once_with([photo["storedPath"] for photo in spec["photos"]], settings, cancel_check=cancel)
         self.assertEqual(calls, [reading])
 
     def test_disabled_vision_or_tag_ocr_does_not_initialize_tag_reader(self):

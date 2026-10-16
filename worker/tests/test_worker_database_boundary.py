@@ -57,7 +57,7 @@ class WorkerDatabaseBoundaryTests(unittest.TestCase):
         self.assertEqual({"001.jpg", "002.jpg"}, {file.name for file in self.incoming.iterdir()})
 
     def run_worker(self, dry=False):
-        sku = self.sku
+        sku = "BC-" + self.sku
         class Decoder:
             def __init__(self, _settings): pass
             def engine_status(self): return {"qr_opencv": True, "qr_pyzbar": True, "ocr_paddle": True}
@@ -96,14 +96,14 @@ class WorkerDatabaseBoundaryTests(unittest.TestCase):
     def test_valid_existing_sku_still_uses_collision_processing(self):
         result = self.run_worker()
         self.assertEqual([], result["items"])
-        self.assertEqual("000001", result["collisions"][0]["sku"])
+        self.assertEqual("BC-000001", result["collisions"][0]["sku"])
         self.assert_preserved()
 
     def test_valid_empty_inventory_can_import_a_new_sku(self):
         self.edit_database("DELETE FROM Item")
         self.sku = "000002"
         result = self.run_worker()
-        self.assertEqual("000002", result["items"][0]["sku"])
+        self.assertEqual("BC-000002", result["items"][0]["sku"])
         self.assertEqual([], result["collisions"])
         self.assert_preserved()
 
@@ -115,7 +115,7 @@ class WorkerDatabaseBoundaryTests(unittest.TestCase):
         with patch.object(process, "_precompute_enrichments", side_effect=enrich):
             result = self.run_worker()
         self.assertEqual([], result["items"])
-        self.assertEqual("000002", result["collisions"][0]["sku"])
+        self.assertEqual("BC-000002", result["collisions"][0]["sku"])
         self.assert_preserved()
 
     def test_read_failure_after_analysis_stops_before_mutation(self):
@@ -132,7 +132,7 @@ class WorkerDatabaseBoundaryTests(unittest.TestCase):
     def test_read_only_dry_run_can_inspect_without_an_initialized_database(self):
         self.database = self.root / "missing.db"
         result = self.run_worker(dry=True)
-        self.assertEqual("000001", result["items"][0]["sku"])
+        self.assertEqual("BC-000001", result["items"][0]["sku"])
         self.assertFalse(self.database.exists())
         self.assert_preserved()
 

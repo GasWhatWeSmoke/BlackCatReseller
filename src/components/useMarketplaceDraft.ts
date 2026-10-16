@@ -124,7 +124,7 @@ export function useMarketplaceDraft<K extends MarketplaceDraftScope>(workspace:s
         throw Error('The save response did not confirm the requested values. Your draft is kept; reload before another save.');
       ctx.saved=confirmed;ctx.form=confirmed;ctx.error=null;persist(ctx,makeMarketplaceDraft(ctx.workspace,ctx.scope,confirmed,confirmed));
       toast.success(`${marketplaceDraftNames[scope]} saved`);
-    }catch(error){ctx.error=note(error);if(error instanceof MarketplaceDraftConflict){ctx.other=error.latest;ctx.storageError=note(error);}toast.error(ctx.error);}
+    }catch(error){ctx.error=note(error);if(error instanceof MarketplaceDraftConflict){ctx.other=error.latest;ctx.storageError=note(error);}toast.error(ctx.error);window.dispatchEvent(new CustomEvent('blackcat-diagnostic-error',{detail:{message:ctx.error}}));}
     finally{ctx.busy=false;clearWaitNotice(ctx);redraw(ctx);}
   }
   const ctx=active.current,belongs=ctx?.workspace===workspace&&ctx.scope===scope;

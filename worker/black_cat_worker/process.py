@@ -23,9 +23,9 @@ import time
 from typing import Callable, Dict, List, Optional
 from uuid import uuid4
 
-from . import config, db as dbmod, dedup, fileops, tag_ocr
-from .decode import Decoder
-from .exif_sort import get_exif, order_photos
+from . import config, db as dbmod, dedup, fileops, tag_ocr, intake_manifest
+from .decode import Decoder, DecodeOutcome
+from .exif_sort import get_exif, order_photos, get_capture_metadata
 from .grouping import DecodedPhoto, GroupedItem, group_photos
 from .managed_vision import (
     ManagedVisionCancelled,
@@ -516,7 +516,7 @@ def _processing_target(
     collision. Ordinal suffixes keep three-or-more same-SKU groups from
     overwriting each other's copied bytes before Node persists the result.
     """
-    is_collision = sku in existing_skus or sku in emitted_skus
+    is_collision = sku in existing_skus or sku in emitted_skus or (sku.startswith("BC-") and sku[3:] in existing_skus)
     emitted_skus.add(sku)
     if not is_collision:
         folder = sku
@@ -673,6 +673,7 @@ def _precompute_enrichments(
         return {id(item): {} for item in items}
 
     results: Dict[int, Dict] = {}
+    checkpoint_root = intake_manifest.job_directory()
     cancel_check()
     with managed_vision_session(f"blackcat-intake:{batch_id}") as client:
         # Entry and the eager queue-boundary check succeeded. A deferral therefore
@@ -685,6 +686,12 @@ def _precompute_enrichments(
         item_total = len(items)
         for item_i, item in enumerate(items, start=1):
             cancel_check()
+            cache_key = intake_manifest.group_key(item, source_hashes, settings) if checkpoint_root else None
+            checkpoint = intake_manifest.read_json(checkpoint_root / "enrichment" / (cache_key + ".json")) if checkpoint_root else None
+            if checkpoint is not None:
+                results[id(item)] = validate_worker_enrichment(checkpoint)
+                emit({"event": "progress", "stage": "enrich_done", "sku": item.sku, "i": item_i, "n": item_total, "message": "restored completed analysis checkpoint"})
+                continue
             metas = _original_vision_metas(item)
             source_paths = [str(meta["storedPath"]) for meta in metas]
             _verify_source_identities(source_paths, source_hashes, cancel_check)
@@ -698,7 +705,7 @@ def _precompute_enrichments(
             tag_reading = None
             try:
                 tag_reading = tag_ocr.read_tags(
-                    [str(meta["storedPath"]) for meta in metas if not meta.get("isMarker")],
+                    [str(meta["storedPath"]) for meta in metas],
                     settings,
                     cancel_check=cancel_check,
                 )
@@ -714,6 +721,8 @@ def _precompute_enrichments(
             elapsed = round(time.time() - ask_started, 1)
             enrichment = validate_worker_enrichment(enrichment)
             results[id(item)] = enrichment
+            if checkpoint_root and not enrichment.get("error"):
+                intake_manifest.atomic_json(checkpoint_root / "enrichment" / (cache_key + ".json"), enrichment)
             assert_enrichment_batch_budget(results.values())
             if enrichment.get("error"):
                 emit({"event": "progress", "stage": "enrich_done", "sku": item.sku,
@@ -756,10 +765,16 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
     _validate_managed_work_roots(work_roots)
     dry = args.dry_run
     force_no_ai = _env_flag(FORCE_NO_AI_ENV)
+    job_root = intake_manifest.job_directory() if not dry else None
+    frozen_workset = intake_manifest.existing_workset(job_root, incoming, cancel_check,
+        lambda row: emit({"event":"progress","stage":"scan","file":row["originalFilename"],"message":"Restored missing original from its verified immutable batch snapshot"}))
 
     cancel_check()
     stability = float(settings.get("fileStabilitySeconds", 2))
-    if dry:
+    if frozen_workset is not None:
+        files, non_images = frozen_workset, []
+        _validate_incoming_workset(files, cancel_check)
+    elif dry:
         files, non_images = _list_incoming(incoming)
         _validate_incoming_workset(files + non_images, cancel_check)
     else:
@@ -826,12 +841,15 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
         dto = _bounded_receipt_text(dto, 128)
         subsec = _bounded_receipt_text(subsec, 128)
         photos.append(DecodedPhoto(path=f, filename=os.path.basename(f),
-                                   exif_dto=dto, exif_subsec=subsec, width=w, height=h))
+                                   exif_dto=dto, exif_subsec=subsec, width=w, height=h,
+                                   capture_metadata=get_capture_metadata(f)))
         if exif_i % exif_step == 0 or exif_i == total_ready:
             emit({"event": "progress", "stage": "exif",
                   "done": exif_i, "total": total_ready})
     cancel_check()
-    order_source = order_photos(photos)
+    manifest, photos, correction, revision = intake_manifest.freeze(job_root, photos, source_hashes, cancel_check)
+    order_source = "manual" if correction.get("order") else manifest["orderSource"]
+    order_review = manifest["orderReviewRequired"] and not bool(correction.get("orderVerified"))
     cancel_check()
     if order_source != "exif":
         emit({"event": "progress", "stage": "sort", "orderSource": order_source})
@@ -845,41 +863,34 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
     # interpreter shipped under worker/python has none of these installed, so
     # this is a real way to end up decoding nothing and never being told.
     engines = decoder.engine_status()
+    if not engines["ocr_paddle"]:
+        problems.append({"type": "DECODE_ENGINE_UNAVAILABLE", "message": "Printed SKU OCR is unavailable or disabled. Text-only stickers require PaddleOCR; install worker dependencies and enable OCR before retrying. No missing markers will be invented."})
     if not engines["qr_opencv"]:
-        problems.append({
-            "type": "DECODE_ENGINE_UNAVAILABLE",
-            "message": ("QR reading is unavailable — OpenCV (opencv-python) failed to "
-                        "import in the worker interpreter, so no sticker can be decoded "
-                        "or even located and every item will come back unmarked. "
-                        "Reinstall the worker dependencies (npm run worker:setup)."),
-        })
-        emit({"event": "progress", "stage": "decode",
-              "message": "QR engine unavailable — no stickers can be read"})
-    else:
-        missing = [name for name, key in (("pyzbar", "qr_pyzbar"), ("PaddleOCR", "ocr_paddle"))
-                   if engines[key] is False]
-        if missing:
-            problems.append({
-                "type": "DECODE_FALLBACK_UNAVAILABLE",
-                "message": (f"Primary QR reading works, but {' and '.join(missing)} failed to "
-                            "import, so stickers with a damaged or glare-hit code have no "
-                            "second chance and will come back unreadable. Reinstall the "
-                            "worker dependencies (npm run worker:setup)."),
-            })
+        problems.append({"type": "DECODE_ENGINE_UNAVAILABLE", "message": "OpenCV QR/image processing is unavailable; restore worker dependencies before relying on automatic sticker recognition."})
     total = len(photos)
     for i, p in enumerate(photos, 1):
         cancel_check()
-        outcome = decoder.decode(p.path)
+        cached = intake_manifest.decode_cache(job_root, p, source_hashes[os.path.abspath(p.path)], engines)
+        outcome = DecodeOutcome(**cached) if cached else decoder.decode(p.path)
+        if not cached:
+            intake_manifest.save_decode(job_root, p, source_hashes[os.path.abspath(p.path)], outcome, engines)
+        if p.photo_id in correction.get("markers", {}):
+            value = correction["markers"][p.photo_id]
+            outcome = DecodeOutcome(value, value, "manual" if value else None, False, None, [{"classification": "inventory_sticker" if value else "other", "status": "operator-confirmed", "revision": revision}])
         cancel_check()
         p.sku = outcome.sku
         p.decoded_raw = _bounded_receipt_text(outcome.raw, 512)
         p.decode_method = _bounded_receipt_text(outcome.method, 128)
         p.qr_pattern_detected = outcome.qr_pattern_detected
+        p.marker_review_reason = getattr(outcome, "review_reason", None)
+        p.marker_evidence = getattr(outcome, "evidence", [])
         emit({"event": "progress", "stage": "decode", "done": i, "total": total,
               "file": p.filename, "sku": p.sku})
 
     cancel_check()
-    grouping = group_photos(photos, order_source=order_source)
+    grouping = group_photos(photos, order_source=order_source, order_review_required=order_review)
+    if job_root:
+        intake_manifest.verification(job_root, manifest, photos, grouping, revision, correction)
     cancel_check()
     _assert_bounded_grouping(grouping.items)
     for prob in grouping.problems:
@@ -892,17 +903,10 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
     dupe_paths: List[str] = []          # skipped in-batch dupes — terminal, archived by the worker
     items_out: List[Dict] = []
     collisions_out: List[Dict] = []
-    batch_id = time.strftime("%Y%m%d-%H%M%S")
+    batch_id = os.environ.get("BLACKCAT_INTAKE_JOB_ID") or time.strftime("%Y%m%d-%H%M%S")
     photos_processed = 0
 
-    # Assign synthetic SKUs to placeholder shells (unreadable/missing stickers)
-    # so they land in the app as fixable items instead of vanishing.
-    shell_taken: set = set()
     shells = 0
-    for item in grouping.items:
-        if item.placeholder and not item.sku:
-            item.sku = _allocate_shell_sku(existing_skus, shell_taken)
-            shells += 1
 
     # Image-to-item matching summary (so the UI/log shows how grouping turned out).
     emit({"event": "progress", "stage": "group", "items": len(grouping.items),
@@ -933,7 +937,10 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
         # ordinary versus collision folders; failed reads still precede mutation.
         existing_hashes = dbmod.existing_hashes(conn)
         existing_skus = dbmod.existing_skus(conn)
-        _assert_incoming_workset(incoming, files + non_images)
+        if frozen_workset is None:
+            _assert_incoming_workset(incoming, files + non_images)
+        if job_root and intake_manifest.read_json(job_root / "corrections.json", {}).get("revision", 0) != revision:
+            raise RuntimeError("Batch corrections changed during processing; stale results were discarded")
     _verify_source_identities(ready_files, source_hashes, cancel_check)
 
     if not dry:
@@ -947,11 +954,11 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
     # Legacy needs-review leftovers (shells replaced this; kept for safety).
     for p in grouping.needs_review:
         dest = p.path
-        if not dry:
+        if not dry and not job_root:
             cancel_check()
             dest = fileops.move_into(p.path, settings["needsReviewPath"])
         needs_review_out.append({"originalFilename": p.filename, "storedPath": dest,
-                                 "reason": "unterminated_group"})
+                                 "reason": next((r["reason"] for r in grouping.unresolved if (p.photo_id or p.path) in r["photoIds"]), "group_review_required")})
 
     # Per-batch grouping audit log — the exact why-these-photos-grouped record,
     # one JSON line per item (kept even on dry runs when a logs dir exists).
@@ -984,6 +991,7 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
         attached_paths: List[str] = []  # /incoming originals actually attached to this item
         idx = 1
         in_batch_dupes = 0
+        seen_hashes = set()  # identical bytes in another item must not erase this item
         reattached = 0
         for member in item.members:
             sha = None if dry else source_hashes.get(os.path.abspath(member.path))
@@ -1084,7 +1092,7 @@ def _run(args, conn, *, cancel_check: Optional[Callable[[], None]] = None) -> Di
     # ungrouped leftover to needs-review so nothing silently re-ingests.
     if not dry:
         archive_dir = os.path.join(settings["archivePath"], batch_id)
-        deferred = set()  # item/collision originals Node will archive post-commit
+        deferred = {os.path.abspath(p.path) for p in grouping.needs_review}  # unresolved originals remain durable for correction
         for rec in items_out + collisions_out:
             for ap in rec.get("originalPaths", []):
                 deferred.add(os.path.abspath(ap))
@@ -1198,6 +1206,11 @@ def main(argv=None) -> int:
     try:
         cancel_guard = CancellationGuard()
         result = run(args, cancel_check=cancel_guard)
+        job_root = intake_manifest.job_directory() if not args.dry_run else None
+        if job_root:
+            revision = intake_manifest.read_json(job_root / "corrections.json", {}).get("revision", 0)
+            intake_manifest.atomic_json(job_root / "result.json", result)
+            intake_manifest.atomic_json(job_root / "result-revision.json", {"revision": revision})
         emit({"event": "result", "payload": result})
         return 0
     except ManagedVisionDeferred as exc:

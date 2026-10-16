@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import ocr_engine, props
+from . import ocr_engine, props, regions
 from .ocr_engine import OcrLine
 from .photo_orientation import rotate_cv_image, validate_rotation
 
@@ -150,6 +150,8 @@ class TagReading:
                 "text": ln.text,
                 "confidence": round(ln.confidence, 3) if ln.confidence is not None else None,
                 "photo": ln.source,
+                "box": list(ln.box) if ln.box else None,
+                "classification": ln.classification,
             }
             if prop:
                 record["prop"] = True
@@ -295,7 +297,7 @@ def extract_size_candidates(texts: Sequence[str]) -> List[str]:
             if token:
                 out.append(token)
         stripped = t.strip(" :.-")
-        if stripped in _LETTER_SIZES or _NUMERIC_SIZE_RE.match(stripped):
+        if stripped in _LETTER_SIZES:
             out.append(stripped)
     return _dedupe(out)
 
@@ -376,6 +378,7 @@ def stitch_wrapped(texts: Sequence[str], max_join: int = 3) -> List[str]:
 
 def interpret(lines: Sequence[OcrLine]) -> TagReading:
     """Turn raw OCR lines into the structured tag reading."""
+    lines = regions.classify(list(lines))
     texts = [normalize_text(ln.text) for ln in lines]
     # The ruler laid beside the garment for scale is the crispest print in the
     # frame and it is not the item. Its lines leave before anything is read off
